@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bauhaus Hand Shape Sorter</title>
+    <!-- Tailwind for UI Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <!-- Google Generative AI SDK -->
+    <script type="importmap">
+      {
+        "imports": {
+          "@google/generative-ai": "https://esm.run/@google/generative-ai"
+        }
+      }
+    </script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+        
+        /* Layering */
+        #video-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 0; overflow: hidden;
+            transform: scaleX(-1); /* Mirror the video */
+        }
+        #webcam {
+            width: 100%; height: 100%; object-fit: cover;
+            opacity: 0.3; /* Prompt requirement */
+        }
+        #canvas-3d {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1; pointer-events: none; /* Let clicks pass through if needed, but we use hands */
+        }
+
+        /* Glassmorphism UI */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            border-radius: 16px;
+        }
+
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10; display: flex; pointer-events: none;
+            flex-direction: column; justify-content: space-between; p: 4;
+        }
+        
+        /* Interactive Elements need pointer events */
+        .interactive { pointer-events: auto; }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <!-- Video Background -->
+    <div id="video-container">
+        <video id="webcam" playsinline></video>
+    </div>
+
+    <!-- 3D Scene -->
+    <canvas id="canvas-3d"></canvas>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        <!-- HUD -->
+        <div class="flex justify-between p-6 w-full">
+            <div class="glass-panel px-6 py-3 text-white font-bold text-xl flex items-center gap-4">
+                <span id="score-display">Score: 0 / 10</span>
+                <span id="time-display" class="text-sm font-normal opacity-80">00:00</span>
+            </div>
+            <button id="restart-btn" class="interactive hidden glass-panel px-6 py-3 text-white hover:bg-white/20 transition">
+                Restart
+            </button>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="interactive absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-50">
+            <div class="glass-panel p-10 max-w-md text-center text-white">
+                <h1 class="text-4xl font-bold mb-2">Shape Sorter</h1>
+                <p class="mb-6 opacity-80">Use your hand to pinch & place the Bauhaus blocks.</p>
+                
+                <div class="mb-6 text-left">
+                    <label class="text-xs uppercase tracking-wider opacity-70 block mb-1">Google Gemini API Key (Optional for AI Feedback)</label>
+                    <input type="password" id="api-key-input" placeholder="Enter API Key here..." class="w-full bg-black/30 border border-white/20 rounded p-2 text-white focus:outline-none focus:border-blue-400">
+                    <p class="text-[10px] mt-1 opacity-50">Key is only stored in browser memory.</p>
+                </div>
+
+                <button id="start-btn" class="w-full bg-white text-black font-bold py-3 rounded hover:bg-gray-200 transition">
+                    Start Camera
+                </button>
+                <div id="loading-msg" class="hidden mt-4 text-sm animate-pulse">Loading models...</div>
+            </div>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="interactive hidden absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-50">
+            <div class="glass-panel p-10 max-w-lg text-center text-white">
+                <h2 class="text-3xl font-bold mb-4">Complete!</h2>
+                <div id="ai-feedback" class="text-lg mb-6 italic min-h-[80px] flex items-center justify-center">
+                    <span class="animate-pulse">Consulting the AI...</span>
+                </div>
+                <button id="play-again-btn" class="bg-white text-black font-bold py-3 px-8 rounded hover:bg-gray-200 transition">
+                    Play Again
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { GoogleGenerativeAI } from "@google/generative-ai";
+
+        // --- Configuration & State ---
+        const CONFIG = {
+            pinchThreshold: 0.08, // Sensitivity for grab
+            dragLift: 2.5,        // How high object floats when grabbed
+            bauhausColors: [0xE94E38, 0x2D478D, 0xF2C500, 0x111111, 0xF0F0F0],
+            targetPos: { x: 5, y: -2 }, // Base position for targets
+            spawnPos: { x: -6, y: 0 }   // Base position for blocks
+        };
+
+        const STATE = {
+            isPlaying: false,
+            score: 0,
+            startTime: 0,
+            elapsed: 0,
+            holding: null, // The object currently being dragged
+            handPos: new THREE.Vector3(),
+            isPinching: false,
+            apiKey: ""
+        };
+
+        // --- Audio System (Synthesized) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSparkle() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            const now = audioCtx.currentTime;
+            // Create a burst of high frequency oscillators
+            for(let i=0; i<5; i++) {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                
+                osc.type = 'sine';
+                // Random high pitch
+                osc.frequency.setValueAtTime(800 + Math.random() * 1200, now);
+                osc.frequency.exponentialRampToValueAtTime(0.01, now + 0.5);
+                
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+                
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            }
+        }
+
+        // --- Three.js Setup ---
+        const canvas = document.getElementById('canvas-3d');
+        const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+
+        const scene = new THREE.Scene();
+        // Camera positioned to view the "table"
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, 15);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- Game Objects ---
+        const objects = []; // Interactable blocks
+        const targets = []; // Target bins
+        const particles = []; // Active particles
+
+        // Geometry Helpers
+        const geoCube = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+        const geoSphere = new THREE.SphereGeometry(0.9, 32, 32);
+        const geoTetra = new THREE.TetrahedronGeometry(1.1);
+
+        // Materials
+        const matTranslucent = (color) => new THREE.MeshPhysicalMaterial({
+            color: color,
+            metalness: 0.1,
+            roughness: 0.2,
+            transmission: 0.1, // Slight glass effect
+            transparent: true,
+            opacity: 0.9
+        });
+
+        // Create Icons for Targets (Canvas Texture)
+        function createIconTexture(type) {
+            const ctxCanvas = document.createElement('canvas');
+            ctxCanvas.width = 128; ctxCanvas.height = 128;
+            const ctx = ctxCanvas.getContext('2d');
+            
+            // Background
+            ctx.fillStyle = '#E0E0E0'; // Light Grey
+            ctx.fillRect(0,0, 128, 128);
+
+            // Icon
+            ctx.fillStyle = '#444444'; // Dark Grey
+            ctx.lineWidth = 10;
+            
+            const center = 64;
+            const size = 30;
+
+            ctx.beginPath();
+            if (type === 'square') {
+                ctx.rect(center-size, center-size, size*2, size*2);
+            } else if (type === 'circle') {
+                ctx.arc(center, center, size, 0, Math.PI*2);
+            } else if (type === 'triangle') {
+                ctx.moveTo(center, center - size);
+                ctx.lineTo(center + size, center + size);
+                ctx.lineTo(center - size, center + size);
+                ctx.closePath();
+            }
+            ctx.fill();
+
+            const tex = new THREE.CanvasTexture(ctxCanvas);
+            return tex;
+        }
+
+        // Setup Targets
+        function setupTargets() {
+            const shapes = ['square', 'circle', 'triangle'];
+            const startX = 3;
+            
+            shapes.forEach((shape, i) => {
+                const boxGeo = new THREE.BoxGeometry(2.5, 0.5, 2.5);
+                
+                // Materials: sides are grey, top has icon
+                const matGrey = new THREE.MeshStandardMaterial({ color: 0xCCCCCC });
+                const matTop = new THREE.MeshStandardMaterial({ map: createIconTexture(shape) });
+                
+                const mesh = new THREE.Mesh(boxGeo, [matGrey, matGrey, matTop, matGrey, matGrey, matGrey]);
+                
+                mesh.position.set(startX + (i * 3), -3, 0);
+                mesh.userData = { type: shape };
+                scene.add(mesh);
+                targets.push(mesh);
+            });
+        }
+
+        // Spawn Blocks
+        function spawnBlocks() {
+            // Clear existing
+            objects.forEach(obj => scene.remove(obj));
+            objects.length = 0;
+
+            const shapes = ['square', 'circle', 'triangle'];
+            
+            for (let i = 0; i < 10; i++) {
+                const shapeType = shapes[Math.floor(Math.random() * shapes.length)];
+                let geo;
+                if (shapeType === 'square') geo = geoCube;
+                else if (shapeType === 'circle') geo = geoSphere;
+                else geo = geoTetra;
+
+                const color = CONFIG.bauhausColors[i % CONFIG.bauhausColors.length];
+                const mesh = new THREE.Mesh(geo, matTranslucent(color));
+
+                // Arrange in a row on the left
+                mesh.position.set(-8 + (i % 2) * 2, 4 - (i * 1.2), 0);
+                
+                mesh.userData = { 
+                    type: shapeType, 
+                    id: i,
+                    originalPos: mesh.position.clone(),
+                    velocity: new THREE.Vector3()
+                };
+
+                scene.add(mesh);
+                objects.push(mesh);
+            }
+        }
+
+        // Cursor Ring
+        const cursorGeo = new THREE.RingGeometry(0.2, 0.25, 32);
+        const cursorMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+        const cursor = new THREE.Mesh(cursorGeo, cursorMat);
+        scene.add(cursor);
+
+        // --- Particle System (Dissolve) ---
+        function triggerDissolve(position, color) {
+            const pCount = 20;
+            const geo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+            const mat = new THREE.MeshBasicMaterial({ color: color, transparent: true });
+
+            for(let i=0; i<pCount; i++) {
+                const mesh = new THREE.Mesh(geo, mat.clone());
+                mesh.position.copy(position);
+                
+                // Random velocity
+                mesh.userData.vel = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2
+                );
+                
+                scene.add(mesh);
+                particles.push(mesh);
+            }
+        }
+
+        // --- MediaPipe Hand Tracking ---
+        const videoElement = document.getElementById('webcam');
+        
+        function onResults(results) {
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                cursor.visible = false;
+                STATE.isPinching = false;
+                return;
+            }
+
+            cursor.visible = true;
+            const landmarks = results.multiHandLandmarks[0];
+            
+            // Key points: 4 (Thumb Tip), 8 (Index Tip)
+            const thumb = landmarks[4];
+            const index = landmarks[8];
+
+            // 1. Calculate Pinch Distance (2D)
+            const distance = Math.hypot(index.x - thumb.x, index.y - thumb.y);
+            STATE.isPinching = distance < CONFIG.pinchThreshold;
+
+            // Visual feedback on cursor
+            cursor.material.color.setHex(STATE.isPinching ? 0x00FF00 : 0xFFFFFF);
+            cursor.scale.setScalar(STATE.isPinching ? 0.8 : 1.0);
+
+            // 2. Map Hand Center to 3D World
+            // We find the center between fingers in normalized device coords (NDC)
+            const centerX = (thumb.x + index.x) / 2;
+            const centerY = (thumb.y + index.y) / 2;
+
+            // MediaPipe x is 0-1 (left-right), y is 0-1 (top-bottom)
+            // Three.js NDC is -1 to 1.
+            // Note: Video is mirrored in CSS (scaleX -1), but logic needs to match visual
+            // If visual is mirrored, right hand appears on right.
+            // MP input: x=0 is left. 
+            // We need to invert X for the 3D projection to match the mirrored CSS video.
+            const ndcX = (1 - centerX) * 2 - 1; 
+            const ndcY = -(centerY * 2 - 1);
+
+            // Raycast to a virtual plane at z=0 to find world position
+            const vector = new THREE.Vector3(ndcX, ndcY, 0.5);
+            vector.unproject(camera);
+            const dir = vector.sub(camera.position).normalize();
+            const distanceToPlane = -camera.position.z / dir.z;
+            const targetPos = camera.position.clone().add(dir.multiplyScalar(distanceToPlane));
+
+            STATE.handPos.copy(targetPos);
+            cursor.position.copy(targetPos);
+            cursor.position.z = 2; // Keep cursor above items
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onResults);
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+
+        // --- AI Feedback Logic ---
+        async function getAIFeedback() {
+            if (!STATE.apiKey) {
+                document.getElementById('ai-feedback').innerText = "Add API Key for AI compliments! Great job though!";
+                return;
+            }
+
+            try {
+                const genAI = new GoogleGenerativeAI(STATE.apiKey);
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash"});
+
+                const prompt = `I just finished a shape sorting game. 
+                Score: ${STATE.score}/10. 
+                Time: ${STATE.elapsed} seconds. 
+                Write a short, very cute, emoji-filled compliment (max 2 sentences) celebrating my speed and accuracy.`;
+
+                const result = await model.generateContent(prompt);
+                const response = await result.response;
+                const text = response.text();
+                
+                document.getElementById('ai-feedback').innerText = text;
+            } catch (error) {
+                console.error("AI Error:", error);
+                document.getElementById('ai-feedback').innerText = "AI is sleeping... but you did amazing! 🌟";
+            }
+        }
+
+        // --- Game Logic Loop ---
+        function checkCollisions() {
+            // Interactable objects are only the active blocks
+            if (STATE.holding) {
+                // Move holding object to hand
+                const targetPos = STATE.handPos.clone();
+                targetPos.z = CONFIG.dragLift; // Float up
+                
+                // Add slight tilt based on movement could go here, but simple lerp is fine
+                STATE.holding.position.lerp(targetPos, 0.2);
+                STATE.holding.rotation.x = THREE.MathUtils.lerp(STATE.holding.rotation.x, 0.5, 0.1);
+                STATE.holding.rotation.z = THREE.MathUtils.lerp(STATE.holding.rotation.z, 0.2, 0.1);
+
+                // Release?
+                if (!STATE.isPinching) {
+                    // Check drops
+                    let matched = false;
+                    
+                    targets.forEach(target => {
+                        // Simple distance check (ignoring Z)
+                        const dist = new THREE.Vector2(STATE.holding.position.x, STATE.holding.position.y)
+                            .distanceTo(new THREE.Vector2(target.position.x, target.position.y));
+                        
+                        if (dist < 2.0 && STATE.holding.userData.type === target.userData.type) {
+                            matched = true;
+                        }
+                    });
+
+                    if (matched) {
+                        // SUCCESS
+                        playSparkle();
+                        triggerDissolve(STATE.holding.position, STATE.holding.material.color);
+                        scene.remove(STATE.holding);
+                        
+                        // Remove from objects array
+                        const index = objects.indexOf(STATE.holding);
+                        if (index > -1) objects.splice(index, 1);
+
+                        STATE.score++;
+                        document.getElementById('score-display').innerText = `Score: ${STATE.score} / 10`;
+                        
+                        // Win Condition
+                        if (STATE.score >= 10) {
+                            endGame();
+                        }
+                    } else {
+                        // FAIL - Return to spawn
+                        // We set a property to animate it back or just snap it.
+                        // For simplicity, let's snap back with a small velocity vector logic in update
+                        STATE.holding.position.copy(STATE.holding.userData.originalPos);
+                        STATE.holding.rotation.set(0,0,0);
+                    }
+
+                    STATE.holding = null;
+                }
+            } else {
+                // Not holding, look to grab
+                if (STATE.isPinching) {
+                    // Find closest object
+                    let closest = null;
+                    let minDist = 100;
+
+                    objects.forEach(obj => {
+                        const dist = obj.position.distanceTo(STATE.handPos);
+                        if (dist < 1.5 && dist < minDist) {
+                            minDist = dist;
+                            closest = obj;
+                        }
+                    });
+
+                    if (closest) {
+                        STATE.holding = closest;
+                    }
+                }
+            }
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.position.add(p.userData.vel);
+                p.material.opacity -= 0.02;
+                p.rotation.x += 0.1;
+                p.rotation.y += 0.1;
+
+                if (p.material.opacity <= 0) {
+                    scene.remove(p);
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (STATE.isPlaying) {
+                // Timer
+                const now = Date.now();
+                STATE.elapsed = Math.floor((now - STATE.startTime) / 1000);
+                const mins = Math.floor(STATE.elapsed / 60).toString().padStart(2, '0');
+                const secs = (STATE.elapsed % 60).toString().padStart(2, '0');
+                document.getElementById('time-display').innerText = `${mins}:${secs}`;
+
+                checkCollisions();
+            }
+
+            updateParticles();
+            renderer.render(scene, camera);
+        }
+
+        // --- Lifecycle Management ---
+        function startGame() {
+            STATE.apiKey = document.getElementById('api-key-input').value;
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('game-over-screen').classList.add('hidden');
+            document.getElementById('restart-btn').classList.remove('hidden');
+            
+            // Audio context requires gesture
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            // Reset Game
+            STATE.score = 0;
+            STATE.startTime = Date.now();
+            STATE.isPlaying = true;
+            document.getElementById('score-display').innerText = "Score: 0 / 10";
+
+            setupTargets();
+            spawnBlocks();
+        }
+
+        function endGame() {
+            STATE.isPlaying = false;
+            document.getElementById('game-over-screen').classList.remove('hidden');
+            getAIFeedback();
+        }
+
+        // Event Listeners
+        document.getElementById('start-btn').addEventListener('click', () => {
+            document.getElementById('loading-msg').classList.remove('hidden');
+            cameraUtils.start().then(() => {
+                startGame();
+            });
+        });
+
+        document.getElementById('restart-btn').addEventListener('click', startGame);
+        document.getElementById('play-again-btn').addEventListener('click', startGame);
+
+        // Start Loop
+        animate();
+
+    </script>
+</body>
+</html>
