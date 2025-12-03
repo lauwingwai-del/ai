@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Neon Air Drum</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- MediaPipe Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Three.js & Post Processing Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Courier New', Courier, monospace;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+        }
+
+        /* PIP Webcam Feed */
+        #webcam-feed {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            border-radius: 8px;
+            border: 2px solid #00ffcc;
+            transform: scaleX(-1); /* Mirror */
+            z-index: 10;
+            opacity: 0.8;
+            box-shadow: 0 0 15px #00ffcc44;
+            object-fit: cover;
+        }
+
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Music Controls Panel */
+        #music-controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 30;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
+            border: 1px solid #00ffcc;
+            border-radius: 12px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 260px;
+            color: #00ffcc;
+            box-shadow: 0 0 15px rgba(0, 255, 204, 0.2);
+            pointer-events: auto;
+            transition: opacity 0.3s;
+        }
+
+        .control-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .control-btn {
+            background: rgba(0, 255, 204, 0.1);
+            border: 1px solid #00ffcc;
+            color: #00ffcc;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+            flex: 1;
+            text-align: center;
+        }
+        
+        .control-btn:hover {
+            background: #00ffcc;
+            color: #000;
+        }
+
+        .control-btn.active {
+            background: #00ffcc;
+            color: #000;
+            box-shadow: 0 0 10px #00ffcc;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: #00ffcc;
+            height: 4px;
+        }
+
+        .track-name {
+            font-size: 0.75rem;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }
+
+        /* Start Button / Overlay */
+        #overlay {
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(10px);
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            pointer-events: auto;
+            transition: opacity 0.5s ease;
+        }
+
+        .neon-btn {
+            background: transparent;
+            color: #00ffcc;
+            border: 2px solid #00ffcc;
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: pointer;
+            box-shadow: 0 0 10px #00ffcc, inset 0 0 10px #00ffcc;
+            text-shadow: 0 0 5px #00ffcc;
+            transition: all 0.3s ease;
+            margin-top: 20px;
+        }
+
+        .neon-btn:hover {
+            background: #00ffcc;
+            color: #000;
+            box-shadow: 0 0 30px #00ffcc, inset 0 0 20px #00ffcc;
+        }
+
+        .title-text {
+            color: #fff;
+            font-size: 3rem;
+            font-weight: 800;
+            text-shadow: 0 0 20px #d900ff;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        /* Loading Spinner */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #d900ff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            display: none;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .hidden { opacity: 0; pointer-events: none; }
+        .d-none { display: none; }
+    </style>
+</head>
+<body>
+
+    <!-- Video Element (Hidden logic, shown via CSS styling above) -->
+    <video id="webcam-input" class="hidden" playsinline></video>
+    
+    <!-- Visual Mirror for User -->
+    <video id="webcam-feed" playsinline muted></video>
+
+    <!-- Music Upload & Control Panel -->
+    <div id="music-controls" class="hidden">
+        <div class="text-xs font-bold mb-1 tracking-widest">BACKING TRACK / 背景音樂</div>
+        <div id="track-display" class="track-name">No track loaded...</div>
+        
+        <!-- Upload -->
+        <label class="control-btn">
+            📂 上傳音樂 (Upload)
+            <input type="file" id="bgm-upload" accept="audio/*" class="d-none">
+        </label>
+
+        <!-- Playback Controls -->
+        <div class="control-row">
+            <button id="btn-play" class="control-btn" disabled>▶ 播放</button>
+            <button id="btn-stop" class="control-btn" disabled>⏹ 停止</button>
+        </div>
+
+        <!-- Sync Mode -->
+        <div class="control-row mt-1">
+            <button id="btn-sync" class="control-btn" title="Start music when you hit the drum">
+                ⚡ 擊鼓開始 (Off)
+            </button>
+        </div>
+
+        <!-- Volume -->
+        <div class="mt-2">
+            <div class="flex justify-between text-xs mb-1 text-white opacity-70">
+                <span>Volume</span>
+                <span id="vol-val">50%</span>
+            </div>
+            <input type="range" id="bgm-vol" min="0" max="1" step="0.01" value="0.5">
+        </div>
+        
+        <!-- Audio Element (Hidden) -->
+        <audio id="bgm-player" loop></audio>
+    </div>
+
+    <!-- 3D Container -->
+    <div id="canvas-container"></div>
+
+    <!-- Start Overlay -->
+    <div id="overlay">
+        <h1 class="title-text">CYBER DRUM</h1>
+        <p class="text-gray-300 max-w-md text-center mb-4 px-4">
+            使用手勢敲擊虛擬鼓面。<br>
+            <span class="text-xs text-gray-500">Enable camera for Air Drumming. Tap screen for fallback.</span>
+        </p>
+        <div class="loader" id="loader"></div>
+        <button id="start-btn" class="neon-btn">INITIALIZE SYSTEM</button>
+        <div id="error-msg" class="text-red-500 mt-4 hidden"></div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- CONFIGURATION ---
+        const CONFIG = {
+            drumHeight: 0, // Y position of drum surface
+            triggerThreshold: 0.15, // How far hand must be above before moving down
+            velocityThreshold: -0.05, // Speed required to trigger
+            drumColor: 0x00ffcc,
+            hitColor: 0xff00ff,
+            bloomStrength: 1.5,
+            bloomRadius: 0.4,
+            cameraIdleSpeed: 0.0005
+        };
+
+        // --- STATE ---
+        const state = {
+            isPlaying: false,
+            leftHand: { pos: new THREE.Vector3(), vel: 0, lastY: 10, isOverDrum: false },
+            rightHand: { pos: new THREE.Vector3(), vel: 0, lastY: 10, isOverDrum: false },
+            lastInteractionTime: 0,
+            syncStart: false, // Music starts on hit
+            musicReady: false
+        };
+
+        // --- MUSIC PLAYER LOGIC ---
+        const bgmPlayer = document.getElementById('bgm-player');
+        const bgmUpload = document.getElementById('bgm-upload');
+        const trackDisplay = document.getElementById('track-display');
+        const btnPlay = document.getElementById('btn-play');
+        const btnStop = document.getElementById('btn-stop');
+        const btnSync = document.getElementById('btn-sync');
+        const volSlider = document.getElementById('bgm-vol');
+        const volVal = document.getElementById('vol-val');
+
+        bgmUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                bgmPlayer.src = url;
+                bgmPlayer.load();
+                trackDisplay.innerText = file.name;
+                trackDisplay.style.color = "#00ffcc";
+                state.musicReady = true;
+                
+                // Enable controls
+                btnPlay.disabled = false;
+                btnStop.disabled = false;
+                
+                // Auto reset status
+                btnPlay.innerText = "▶ 播放";
+            }
+        });
+
+        btnPlay.addEventListener('click', () => {
+            if (!state.musicReady) return;
+            if (bgmPlayer.paused) {
+                bgmPlayer.play();
+                btnPlay.innerText = "⏸ 暫停";
+            } else {
+                bgmPlayer.pause();
+                btnPlay.innerText = "▶ 播放";
+            }
+        });
+
+        btnStop.addEventListener('click', () => {
+            bgmPlayer.pause();
+            bgmPlayer.currentTime = 0;
+            btnPlay.innerText = "▶ 播放";
+        });
+
+        btnSync.addEventListener('click', () => {
+            state.syncStart = !state.syncStart;
+            if (state.syncStart) {
+                btnSync.classList.add('active');
+                btnSync.innerText = "⚡ 擊鼓開始 (On)";
+                // If syncing, pause first
+                bgmPlayer.pause();
+                bgmPlayer.currentTime = 0;
+                btnPlay.innerText = "▶ 播放";
+            } else {
+                btnSync.classList.remove('active');
+                btnSync.innerText = "⚡ 擊鼓開始 (Off)";
+            }
+        });
+
+        volSlider.addEventListener('input', (e) => {
+            const val = e.target.value;
+            bgmPlayer.volume = val;
+            volVal.innerText = Math.round(val * 100) + "%";
+        });
+
+        // --- AUDIO SYSTEM (Web Audio API for Drums) ---
+        let audioCtx;
+        
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        function playDrumSound(velocity = 1, pan = 0) {
+            if (!audioCtx) return;
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const t = audioCtx.currentTime;
+            const vol = Math.min(Math.abs(velocity) * 5, 1.2); // Map velocity to volume
+
+            // 1. Kick/Tom (Sine Wave body)
+            const osc = audioCtx.createOscillator();
+            const oscGain = audioCtx.createGain();
+            
+            osc.frequency.setValueAtTime(150, t); // Start Pitch
+            osc.frequency.exponentialRampToValueAtTime(0.01, t + 0.5); // Drop fast
+            
+            oscGain.gain.setValueAtTime(vol * 0.8, t);
+            oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+
+            osc.connect(oscGain);
+            oscGain.connect(audioCtx.destination);
+
+            osc.start(t);
+            osc.stop(t + 0.5);
+
+            // 2. Snap/Noise (High freq impact)
+            const bufferSize = audioCtx.sampleRate * 0.1; // 0.1 seconds
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const noiseGain = audioCtx.createGain();
+            
+            // Filter noise
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'highpass';
+            filter.frequency.value = 1000;
+
+            noiseGain.gain.setValueAtTime(vol * 0.5, t);
+            noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+
+            noise.connect(filter);
+            filter.connect(noiseGain);
+
+            // Panning
+            const panner = audioCtx.createStereoPanner();
+            panner.pan.value = pan;
+            noiseGain.connect(panner);
+            panner.connect(audioCtx.destination);
+
+            noise.start(t);
+        }
+
+        // --- THREE.JS SCENE SETUP ---
+        const container = document.getElementById('canvas-container');
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for mobile
+        renderer.toneMapping = THREE.ReinhardToneMapping;
+        container.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        // Fog for depth
+        scene.fog = new THREE.FogExp2(0x050505, 0.05);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 4, 6);
+        camera.lookAt(0, 0, 0);
+
+        // --- LIGHTING ---
+        const ambientLight = new THREE.AmbientLight(0x404040, 1.0);
+        scene.add(ambientLight);
+
+        const spotLight = new THREE.SpotLight(0xffffff, 100);
+        spotLight.position.set(0, 10, 0);
+        spotLight.angle = Math.PI / 6;
+        spotLight.penumbra = 0.5;
+        scene.add(spotLight);
+
+        const blueLight = new THREE.PointLight(0x0088ff, 50, 10);
+        blueLight.position.set(-5, 2, 0);
+        scene.add(blueLight);
+
+        const pinkLight = new THREE.PointLight(0xff0088, 50, 10);
+        pinkLight.position.set(5, 2, 0);
+        scene.add(pinkLight);
+
+        // --- OBJECTS: THE DRUM ---
+        const drumGroup = new THREE.Group();
+        scene.add(drumGroup);
+
+        // Drum Body
+        const drumBodyGeo = new THREE.CylinderGeometry(2, 1.8, 2, 32);
+        const drumBodyMat = new THREE.MeshStandardMaterial({ 
+            color: 0x111111, 
+            metalness: 0.8, 
+            roughness: 0.2,
+            envMapIntensity: 1 
+        });
+        const drumBody = new THREE.Mesh(drumBodyGeo, drumBodyMat);
+        drumBody.position.y = -1;
+        drumGroup.add(drumBody);
+
+        // Drum Head (The glowing part)
+        const drumHeadGeo = new THREE.CircleGeometry(2, 32);
+        const drumHeadMat = new THREE.MeshStandardMaterial({
+            color: 0x000000,
+            emissive: CONFIG.drumColor,
+            emissiveIntensity: 0.8,
+            roughness: 0.4
+        });
+        const drumHead = new THREE.Mesh(drumHeadGeo, drumHeadMat);
+        drumHead.rotation.x = -Math.PI / 2;
+        drumHead.position.y = 0.01; // Slightly above body
+        drumGroup.add(drumHead);
+
+        // Drum Rim
+        const rimGeo = new THREE.TorusGeometry(2.1, 0.1, 8, 32);
+        const rimMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 1, roughness: 0.1 });
+        const rim = new THREE.Mesh(rimGeo, rimMat);
+        rim.rotation.x = -Math.PI / 2;
+        rim.position.y = 0;
+        drumGroup.add(rim);
+
+        // --- OBJECTS: HAND AVATARS (DRUMSTICKS) ---
+        // Function to create a drumstick mesh
+        function createDrumstick() {
+            const group = new THREE.Group();
+
+            // 1. The Stick Shaft
+            // Radius 0.05, Length 2.5
+            const stickGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.5, 16);
+            // Move geometry up so the 'bottom' (y=0) is the tip of the stick
+            // Cylinder center is at 0, so we move it up by half height (1.25)
+            stickGeo.translate(0, 1.25, 0);
+            
+            const stickMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); // Glowing white
+            const stick = new THREE.Mesh(stickGeo, stickMat);
+            
+            // 2. The Tip (Collision Point)
+            const tipGeo = new THREE.SphereGeometry(0.08, 16, 16);
+            const tip = new THREE.Mesh(tipGeo, stickMat);
+            tip.position.set(0, 0, 0); // Tip is exactly at local origin
+
+            group.add(stick);
+            group.add(tip);
+
+            // 3. Default Orientation
+            // Rotate the entire group so the stick points "forward/down" relative to the hand position
+            // Assuming (0,0,0) is the tracked finger position.
+            // We want the stick to extend BACKWARDS from the finger.
+            // Rotating -60 degrees on X makes it point down-forward slightly, looking like a hit.
+            group.rotation.x = -Math.PI / 3; 
+
+            return group;
+        }
+        
+        const leftHandMesh = createDrumstick();
+        const rightHandMesh = createDrumstick();
+        
+        // Add subtle tilt for ergonomics (Left tilts right, Right tilts left)
+        leftHandMesh.rotation.z = -0.3;
+        rightHandMesh.rotation.z = 0.3;
+        
+        // Hide initially
+        leftHandMesh.visible = false;
+        rightHandMesh.visible = false;
+
+        scene.add(leftHandMesh);
+        scene.add(rightHandMesh);
+
+        // --- POST PROCESSING (BLOOM) ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0;
+        bloomPass.strength = CONFIG.bloomStrength;
+        bloomPass.radius = CONFIG.bloomRadius;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- ANIMATION & LOGIC ---
+        
+        function triggerBeat(handName, velocity) {
+            state.lastInteractionTime = performance.now();
+            
+            // Music Trigger Logic (Sync Start)
+            if (state.syncStart && state.musicReady && bgmPlayer.paused) {
+                bgmPlayer.play();
+                btnPlay.innerText = "⏸ 暫停";
+                // Optionally disable sync start after first trigger so it doesn't stutter?
+                // Actually, if we just check .paused it works as a "Start on first hit"
+                // But if user pauses manually, next hit will restart it. That's fine.
+            }
+
+            // Audio
+            const pan = handName === 'left' ? -0.5 : 0.5;
+            playAudioSafe(velocity, pan);
+
+            // Visuals
+            // Flash color
+            drumHead.material.emissive.setHex(CONFIG.hitColor);
+            drumHead.material.emissiveIntensity = 3.0;
+            
+            // Vibrate/Deform
+            drumHead.scale.set(0.9, 0.9, 0.9); // Shrink slightly
+            drumGroup.position.y = -0.2; // Push down
+        }
+
+        function playAudioSafe(vel, pan) {
+            if(audioCtx && audioCtx.state === 'running') {
+                playDrumSound(vel, pan);
+            }
+        }
+
+        function updateDrumVisuals() {
+            // Decay emissive
+            const currentHex = drumHead.material.emissive.getHex();
+            const targetHex = CONFIG.drumColor;
+            
+            // Lerp color back to base
+            drumHead.material.emissive.lerp(new THREE.Color(targetHex), 0.1);
+            
+            // Decay Intensity
+            drumHead.material.emissiveIntensity = THREE.MathUtils.lerp(drumHead.material.emissiveIntensity, 0.8, 0.1);
+
+            // Restore physics
+            drumHead.scale.lerp(new THREE.Vector3(1,1,1), 0.2);
+            drumGroup.position.y = THREE.MathUtils.lerp(drumGroup.position.y, 0, 0.2);
+        }
+
+        function handleHandLogic(handState, handMesh, landmarks) {
+            if (!landmarks) {
+                handMesh.visible = false;
+                handState.lastY = 10; // Reset
+                return;
+            }
+
+            handMesh.visible = true;
+
+            // Map Coordinates
+            // MediaPipe: x (0-1), y (0-1). 
+            // 3D: x (-ratio to ratio), y (approx -3 to 3)
+            // We map x to screen width at depth 0
+            
+            const x = (1 - landmarks.x) * 2 - 1; // Invert X for mirror effect
+            const y = -(landmarks.y * 2 - 1);
+            
+            // Project to a depth plane slightly above the drum
+            // Simple mapping:
+            const targetX = x * 6; // Width multiplier
+            const targetY = y * 4 + 2; // Height offset to keep hands usually above drum
+            const targetZ = 0; // Keep on drum plane
+
+            // Lerp for smoothness
+            handState.pos.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.3);
+            handMesh.position.copy(handState.pos);
+
+            // Velocity Calc
+            const currentY = handState.pos.y;
+            const vel = currentY - handState.lastY;
+            handState.vel = vel;
+
+            // Collision Detection
+            // Check if within drum radius (approx 2)
+            const dist = Math.sqrt(handState.pos.x * handState.pos.x + handState.pos.z * handState.pos.z);
+            
+            if (dist < 2.5) {
+                // Inside drum cylinder area
+                
+                // Trigger Condition: 
+                // 1. Moving Down (vel < 0)
+                // 2. Crossing the surface (currentY < drumHeight)
+                // 3. Was previously above (lastY > drumHeight)
+                
+                if (vel < CONFIG.velocityThreshold && currentY < CONFIG.drumHeight && handState.lastY >= CONFIG.drumHeight) {
+                    triggerBeat(handMesh === leftHandMesh ? 'left' : 'right', vel);
+                }
+            }
+
+            handState.lastY = currentY;
+        }
+
+
+        // --- MAIN LOOP ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = clock.getElapsedTime();
+
+            // Idle Camera
+            if (performance.now() - state.lastInteractionTime > 2000) {
+                camera.position.x = Math.sin(time * 0.5) * 6;
+                camera.position.z = Math.cos(time * 0.5) * 6;
+                camera.lookAt(0, 0, 0);
+            }
+
+            updateDrumVisuals();
+
+            renderer.clear();
+            composer.render();
+        }
+
+        // --- INPUT HANDLING (MEDIAPIPE) ---
+        const videoElement = document.getElementById('webcam-input');
+        const feedElement = document.getElementById('webcam-feed');
+
+        function onResults(results) {
+            // Update Webcam Feed
+            // Note: drawingUtils is heavy, we just map 3D objects
+            // We do not draw on 2D canvas to save perf.
+            
+            let leftFound = false;
+            let rightFound = false;
+
+            if (results.multiHandLandmarks) {
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const landmarks = results.multiHandLandmarks[i];
+                    const handedness = results.multiHandedness[i].label; // Left or Right
+                    
+                    // Index finger tip is index 8
+                    const tip = landmarks[8];
+
+                    if (handedness === 'Left') {
+                        handleHandLogic(state.rightHand, rightHandMesh, tip); // MediaPipe handedness is mirrored
+                        rightFound = true;
+                    } else {
+                        handleHandLogic(state.leftHand, leftHandMesh, tip);
+                        leftFound = true;
+                    }
+                }
+            }
+
+            if (!leftFound) handleHandLogic(state.leftHand, leftHandMesh, null);
+            if (!rightFound) handleHandLogic(state.rightHand, rightHandMesh, null);
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1, // 0 is fastest, 1 is balanced
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onResults);
+
+        // --- INITIALIZATION ---
+        const startBtn = document.getElementById('start-btn');
+        const overlay = document.getElementById('overlay');
+        const loader = document.getElementById('loader');
+        const errorMsg = document.getElementById('error-msg');
+        const musicControls = document.getElementById('music-controls');
+
+        async function startApp() {
+            startBtn.style.display = 'none';
+            loader.style.display = 'block';
+
+            // 1. Init Audio
+            initAudio();
+            playAudioSafe(-1, 0); // Test sound
+
+            // 2. Init Camera
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 640, // Lower res for performance
+                height: 480
+            });
+
+            // Set source for visual feedback
+            if (navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: true })
+                    .then(function (stream) {
+                        feedElement.srcObject = stream;
+                        feedElement.play();
+                    })
+                    .catch(function (error) {
+                        console.error("Video Error", error);
+                    });
+            }
+
+            try {
+                await camera.start();
+                state.isPlaying = true;
+                overlay.style.opacity = '0';
+                setTimeout(() => overlay.style.display = 'none', 500);
+                
+                // Show Music Controls
+                musicControls.classList.remove('hidden');
+                
+                animate();
+            } catch (e) {
+                console.error(e);
+                loader.style.display = 'none';
+                errorMsg.classList.remove('hidden');
+                errorMsg.innerText = "Camera Access Denied or Not Found. Touch/Click screen to play manually.";
+                
+                // Fallback mode
+                state.isPlaying = true;
+                overlay.style.opacity = '0';
+                setTimeout(() => overlay.style.display = 'none', 500);
+                musicControls.classList.remove('hidden');
+                animate();
+            }
+        }
+
+        startBtn.addEventListener('click', startApp);
+
+        // --- RESIZE ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- FALLBACK MOUSE/TOUCH ---
+        window.addEventListener('pointerdown', (e) => {
+            // Prevent triggering if clicking UI
+            if (e.target.closest('#music-controls')) return;
+            
+            if (!state.isPlaying) return;
+            triggerBeat('right', -1);
+        });
+
+    </script>
+</body>
+</html>
