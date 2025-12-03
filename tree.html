@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>3D Interactive Galaxy Christmas Tree</title>
+    <style>
+        :root {
+            --glass-bg: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --primary-color: #ff3366;
+            --text-color: #ffffff;
+        }
+
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            outline: none;
+        }
+
+        /* UI Overlay */
+        #ui-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Let clicks pass through to canvas */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        /* Top Controls */
+        .control-panel {
+            display: flex;
+            gap: 15px;
+            pointer-events: auto;
+            align-items: flex-start;
+        }
+
+        .btn {
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--glass-border);
+            color: var(--text-color);
+            padding: 10px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .hidden-input {
+            display: none;
+        }
+
+        /* Status & Hints */
+        #status-bar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 12px;
+            text-align: right;
+            pointer-events: none;
+        }
+
+        /* Interaction Hint at bottom */
+        #hint-overlay {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+            margin-bottom: 20px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            pointer-events: none;
+            animation: pulse 3s infinite ease-in-out;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        /* Loading Spinner */
+        #loader {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none; /* Hidden by default */
+            flex-direction: column;
+            align-items: center;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid var(--primary-color);
+            animation: spin 1s linear infinite;
+        }
+
+        .loader-text {
+            margin-top: 10px;
+            color: white;
+            font-size: 14px;
+            background: rgba(0,0,0,0.5);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 600px) {
+            .btn { padding: 8px 16px; font-size: 12px; }
+            #status-bar { font-size: 10px; max-width: 150px; }
+            #hint-overlay { font-size: 12px; }
+        }
+    </style>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="ui-container">
+        <div class="control-panel">
+            <button class="btn" id="btn-upload">📷 上传照片</button>
+            <input type="file" id="file-input" class="hidden-input" multiple accept="image/png, image/jpeg, image/webp">
+            <button class="btn" id="btn-toggle">✨ 散开/还原</button>
+            <button class="btn" id="btn-reset">🔄 重置</button>
+        </div>
+        
+        <div id="status-bar">
+            <div>3D 场景就绪</div>
+            <div id="photo-count">照片: 0 / 60</div>
+        </div>
+
+        <div id="loader">
+            <div class="spinner"></div>
+            <div class="loader-text" id="loader-text">处理中...</div>
+        </div>
+
+        <div id="hint-overlay">
+            双击屏幕 / 双指点击以触发特效<br>拖动旋转 · 捏合缩放
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        // Simple Tweening implementation included to avoid extra dependency chain issues
+        import TWEEN from 'https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.esm.min.js';
+
+        // --- Configuration & Global State ---
+        const CONFIG = {
+            maxPhotos: 60,
+            treeHeight: 25,
+            treeBaseRadius: 10,
+            leafCount: 4500, // Reduced for mobile performance
+            lightCount: 150,
+            starCount: 1500,
+            bloomStrength: 1.2,
+            bloomThreshold: 0.2,
+            bloomRadius: 0.5,
+            cameraZ: 40,
+            photoScale: 2.0 // Size of polaroids
+        };
+
+        const STATE = {
+            isExploded: false,
+            photos: [], // Array of photo mesh objects
+            animating: true,
+            photoTextureCache: []
+        };
+
+        // --- Three.js Core Setup ---
+        const canvas = document.createElement('canvas');
+        document.body.appendChild(canvas);
+        
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.0;
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050510, 0.015); // Deep space fog
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+        camera.position.set(0, CONFIG.treeHeight * 0.4, CONFIG.cameraZ);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 5;
+        controls.maxDistance = 100;
+        controls.maxPolarAngle = Math.PI / 2 + 0.2; // Prevent going too far below
+        controls.enablePan = false;
+
+        // --- Post Processing ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            CONFIG.bloomStrength,
+            CONFIG.bloomRadius,
+            CONFIG.bloomThreshold
+        );
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- Helpers: Texture Generators (No external assets) ---
+        function createParticleTexture() {
+            const cvs = document.createElement('canvas');
+            cvs.width = 32; cvs.height = 32;
+            const ctx = cvs.getContext('2d');
+            const grad = ctx.createRadialGradient(16,16,0, 16,16,16);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(0.2, 'rgba(255,255,255,0.8)');
+            grad.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0,32,32);
+            const tex = new THREE.CanvasTexture(cvs);
+            return tex;
+        }
+
+        function createLeafTexture() {
+            const cvs = document.createElement('canvas');
+            cvs.width = 32; cvs.height = 32;
+            const ctx = cvs.getContext('2d');
+            // Soft blurry circle
+            const grad = ctx.createRadialGradient(16,16,0, 16,16,16);
+            grad.addColorStop(0, '#4CAF50');
+            grad.addColorStop(1, 'rgba(0,50,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0,32,32);
+            return new THREE.CanvasTexture(cvs);
+        }
+
+        function createNoiseTexture() {
+            // Simple noise for galaxy clouds
+            const size = 128;
+            const data = new Uint8Array(size * size * 4);
+            for(let i=0; i<size*size*4; i+=4) {
+                const val = Math.random() * 255;
+                data[i] = val; data[i+1] = val; data[i+2] = val; data[i+3] = Math.random() * 50;
+            }
+            const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+            tex.needsUpdate = true;
+            return tex;
+        }
+
+        const particleTex = createParticleTexture();
+        const leafTex = createLeafTexture();
+        const cloudTex = createNoiseTexture();
+
+        // --- Scene Elements ---
+
+        // 1. Lighting
+        const ambientLight = new THREE.AmbientLight(0x222222);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        dirLight.position.set(10, 20, 10);
+        scene.add(dirLight);
+
+        // 2. Stars & Galaxy
+        const starGeo = new THREE.BufferGeometry();
+        const starPos = [];
+        const starSizes = [];
+        const starPhases = [];
+        for(let i=0; i<CONFIG.starCount; i++) {
+            const r = 50 + Math.random() * 200;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(2 * Math.random() - 1);
+            starPos.push(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+            starSizes.push(Math.random() * 0.5 + 0.1);
+            starPhases.push(Math.random() * Math.PI * 2);
+        }
+        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+        starGeo.setAttribute('size', new THREE.Float32BufferAttribute(starSizes, 1));
+        starGeo.setAttribute('phase', new THREE.Float32BufferAttribute(starPhases, 1));
+        
+        // Custom shader for blinking stars
+        const starMat = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                color: { value: new THREE.Color(0xffffff) },
+                pixelRatio: { value: renderer.getPixelRatio() }
+            },
+            vertexShader: `
+                attribute float size;
+                attribute float phase;
+                uniform float time;
+                uniform float pixelRatio;
+                varying float vAlpha;
+                void main() {
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    float blink = 0.5 + 0.5 * sin(time * 1.5 + phase);
+                    gl_PointSize = size * pixelRatio * (300.0 / -mvPosition.z);
+                    vAlpha = blink;
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 color;
+                varying float vAlpha;
+                void main() {
+                    float d = distance(gl_PointCoord, vec2(0.5));
+                    if(d > 0.5) discard;
+                    float intensity = 1.0 - (d * 2.0);
+                    intensity = pow(intensity, 2.0);
+                    gl_FragColor = vec4(color, vAlpha * intensity);
+                }
+            `,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+        const stars = new THREE.Points(starGeo, starMat);
+        scene.add(stars);
+
+        // Meteors (Pooled lines)
+        const meteors = [];
+        const meteorGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-2)]);
+        const meteorMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
+        for(let i=0; i<3; i++) {
+            const m = new THREE.Line(meteorGeo, meteorMat);
+            m.visible = false;
+            scene.add(m);
+            meteors.push({ mesh: m, speed: 0, life: 0 });
+        }
+
+        // 3. The Tree
+        const treeGroup = new THREE.Group();
+        scene.add(treeGroup);
+
+        // 3a. Leaves (Points)
+        const leafPos = [];
+        const leafColors = [];
+        const treeBoundingBox = { min: new THREE.Vector3(-10,0,-10), max: new THREE.Vector3(10,25,10) };
+        const greenPalette = [new THREE.Color(0x0f5020), new THREE.Color(0x1a6b2e), new THREE.Color(0x083815)];
+
+        for(let i=0; i<CONFIG.leafCount; i++) {
+            // Cone/Spiral distribution
+            const y = Math.random() * CONFIG.treeHeight;
+            const progress = y / CONFIG.treeHeight;
+            const radius = CONFIG.treeBaseRadius * (1 - progress) + (Math.random() * 1.5); // Add volume
+            const angle = y * 2.5 + Math.random() * Math.PI * 2;
+            
+            const x = Math.cos(angle) * radius;
+            const z = Math.sin(angle) * radius;
+            
+            leafPos.push(x, y, z);
+            
+            const col = greenPalette[Math.floor(Math.random() * greenPalette.length)];
+            leafColors.push(col.r, col.g, col.b);
+        }
+        
+        const leafGeo = new THREE.BufferGeometry();
+        leafGeo.setAttribute('position', new THREE.Float32BufferAttribute(leafPos, 3));
+        leafGeo.setAttribute('color', new THREE.Float32BufferAttribute(leafColors, 3));
+        const leafMat = new THREE.PointsMaterial({
+            size: 0.6,
+            map: leafTex,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+            blending: THREE.NormalBlending
+        });
+        const leafSystem = new THREE.Points(leafGeo, leafMat);
+        treeGroup.add(leafSystem);
+
+        // 3b. Lights (InstancedMesh)
+        const lightGeo = new THREE.SphereGeometry(0.15, 8, 8);
+        const lightMat = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff, 
+            emissive: 0xffffff, 
+            emissiveIntensity: 2.0,
+            roughness: 0.2
+        });
+        const lightsMesh = new THREE.InstancedMesh(lightGeo, lightMat, CONFIG.lightCount);
+        const dummy = new THREE.Object3D();
+        const lightPhases = [];
+        const lightColors = [0xff0000, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff];
+
+        for(let i=0; i<CONFIG.lightCount; i++) {
+            const y = Math.random() * CONFIG.treeHeight;
+            const r = (CONFIG.treeBaseRadius * (1 - y/CONFIG.treeHeight)) + 0.2; // Slightly outside leaves
+            const theta = Math.random() * Math.PI * 2;
+            dummy.position.set(r * Math.cos(theta), y, r * Math.sin(theta));
+            dummy.updateMatrix();
+            lightsMesh.setMatrixAt(i, dummy.matrix);
+            
+            // Random color per instance
+            const c = new THREE.Color(lightColors[Math.floor(Math.random() * lightColors.length)]);
+            lightsMesh.setColorAt(i, c);
+            lightPhases.push(Math.random() * Math.PI * 2);
+        }
+        treeGroup.add(lightsMesh);
+
+        // 3c. Top Star
+        const topStarGeo = new THREE.OctahedronGeometry(1.2, 0);
+        const topStarMat = new THREE.MeshBasicMaterial({ color: 0xffdd00 });
+        const topStar = new THREE.Mesh(topStarGeo, topStarMat);
+        topStar.position.y = CONFIG.treeHeight + 0.5;
+        // Add glow sprite behind star
+        const glowSprite = new THREE.Sprite(new THREE.SpriteMaterial({ 
+            map: particleTex, color: 0xffaa00, blending: THREE.AdditiveBlending 
+        }));
+        glowSprite.scale.set(6,6,1);
+        topStar.add(glowSprite);
+        treeGroup.add(topStar);
+
+        // --- Photo System ---
+        const photoManager = {
+            loader: new THREE.TextureLoader(),
+            backTexture: null,
+            
+            init: function() {
+                // Generate a gray noise texture for card back
+                const cvs = document.createElement('canvas');
+                cvs.width=64; cvs.height=64;
+                const ctx = cvs.getContext('2d');
+                ctx.fillStyle = '#eee'; ctx.fillRect(0,0,64,64);
+                ctx.fillStyle = '#ccc'; ctx.font = '10px Arial'; ctx.fillText('Merry', 10, 30); ctx.fillText('Xmas', 10, 45);
+                this.backTexture = new THREE.CanvasTexture(cvs);
+            },
+
+            processFiles: function(files) {
+                if (files.length === 0) return;
+                
+                const remainingSlots = CONFIG.maxPhotos - STATE.photos.length;
+                if (remainingSlots <= 0) {
+                    alert("照片数量已达上限！");
+                    return;
+                }
+
+                const toProcess = Array.from(files).slice(0, remainingSlots);
+                const uiLoader = document.getElementById('loader');
+                uiLoader.style.display = 'flex';
+                let processed = 0;
+
+                toProcess.forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            this.createPolaroid(img);
+                            processed++;
+                            document.getElementById('photo-count').innerText = `照片: ${STATE.photos.length} / ${CONFIG.maxPhotos}`;
+                            if(processed === toProcess.length) {
+                                uiLoader.style.display = 'none';
+                            }
+                        };
+                        img.src = e.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                });
+            },
+
+            createPolaroid: function(img) {
+                // Canvas resizing & Polaroid frame drawing
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const size = 512; // Texture size
+                canvas.width = size;
+                canvas.height = size;
+
+                // White paper background
+                ctx.fillStyle = '#fdfdfd';
+                ctx.fillRect(0, 0, size, size);
+                
+                // Shadow/Paper texture simulation
+                ctx.fillStyle = 'rgba(0,0,0,0.02)';
+                ctx.fillRect(0,0,size,5);
+
+                // Draw user image centered with padding
+                const padding = 40;
+                const bottomPadding = 100; // Text area
+                const drawWidth = size - padding * 2;
+                const drawHeight = size - padding - bottomPadding;
+
+                // Aspect ratio fit
+                const imgAspect = img.width / img.height;
+                const regionAspect = drawWidth / drawHeight;
+                
+                let renderW, renderH, offsetX, offsetY;
+                if(imgAspect > regionAspect) {
+                    renderW = drawWidth;
+                    renderH = drawWidth / imgAspect;
+                    offsetX = padding;
+                    offsetY = padding + (drawHeight - renderH)/2;
+                } else {
+                    renderH = drawHeight;
+                    renderW = drawHeight * imgAspect;
+                    offsetX = padding + (drawWidth - renderW)/2;
+                    offsetY = padding;
+                }
+
+                ctx.drawImage(img, offsetX, offsetY, renderW, renderH);
+
+                // Add border around image to define cutout
+                ctx.strokeStyle = '#eee';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(offsetX, offsetY, renderW, renderH);
+
+                const tex = new THREE.CanvasTexture(canvas);
+                tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                
+                // Create Mesh
+                const geometry = new THREE.PlaneGeometry(CONFIG.photoScale, CONFIG.photoScale);
+                const materials = [
+                    new THREE.MeshBasicMaterial({ map: tex }), // Front
+                    new THREE.MeshBasicMaterial({ map: this.backTexture }) // Back
+                ];
+
+                // Create a Group to hold the double-sided card logic (or just use BackSide logic)
+                // Actually easier: Single mesh, PlaneGeometry, 2 groups for materials? 
+                // No, simple Plane with Front side and another slightly offset for back is safer for simple sorting.
+                // Let's use a BoxGeometry very thin to have sides.
+                const boxGeo = new THREE.BoxGeometry(CONFIG.photoScale, CONFIG.photoScale, 0.05);
+                const matArray = [
+                    new THREE.MeshBasicMaterial({color: 0xffffff}), // Right
+                    new THREE.MeshBasicMaterial({color: 0xffffff}), // Left
+                    new THREE.MeshBasicMaterial({color: 0xffffff}), // Top
+                    new THREE.MeshBasicMaterial({color: 0xffffff}), // Bottom
+                    new THREE.MeshBasicMaterial({ map: tex }), // Front
+                    new THREE.MeshBasicMaterial({ map: this.backTexture }) // Back
+                ];
+
+                const mesh = new THREE.Mesh(boxGeo, matArray);
+                
+                // Random position in Tree
+                const y = Math.random() * (CONFIG.treeHeight - 2) + 1;
+                const r = (CONFIG.treeBaseRadius * (1 - y/CONFIG.treeHeight)) + 0.5;
+                const theta = Math.random() * Math.PI * 2;
+                
+                // Store Positions
+                const treePos = new THREE.Vector3(r * Math.cos(theta), y, r * Math.sin(theta));
+                mesh.position.copy(treePos);
+                
+                // Random tilt for natural look
+                mesh.rotation.z = (Math.random() - 0.5) * 0.2;
+                mesh.rotation.y = theta + Math.PI/2; // Face outward roughly
+
+                // Metadata
+                mesh.userData = {
+                    treePos: treePos.clone(),
+                    treeRot: mesh.rotation.clone(),
+                    velocity: new THREE.Vector3(), // For simple wind
+                    offset: Math.random() * 100 // Time offset
+                };
+
+                treeGroup.add(mesh);
+                STATE.photos.push(mesh);
+            }
+        };
+        photoManager.init();
+
+        // --- Interaction Logic ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // Custom Event Listeners
+        const uploadBtn = document.getElementById('btn-upload');
+        const fileInput = document.getElementById('file-input');
+        const resetBtn = document.getElementById('btn-reset');
+        const toggleBtn = document.getElementById('btn-toggle');
+
+        uploadBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => photoManager.processFiles(e.target.files));
+        
+        resetBtn.addEventListener('click', () => {
+            // Remove photos
+            STATE.photos.forEach(p => treeGroup.remove(p));
+            STATE.photos = [];
+            document.getElementById('photo-count').innerText = "照片: 0 / 60";
+            if(STATE.isExploded) toggleExplosion();
+        });
+
+        toggleBtn.addEventListener('click', toggleExplosion);
+
+        // Double Tap / Double Click Detection
+        let lastTap = 0;
+        const doubleTapDelay = 300;
+
+        renderer.domElement.addEventListener('touchstart', (e) => {
+            const now = new Date().getTime();
+            if (now - lastTap < doubleTapDelay && e.touches.length === 1) {
+                toggleExplosion();
+            }
+            lastTap = now;
+        }, {passive: true});
+
+        renderer.domElement.addEventListener('dblclick', toggleExplosion);
+
+        // --- Animation & Effects Logic ---
+        
+        // Fireworks System
+        class Firework {
+            constructor() {
+                this.particles = [];
+                const color = new THREE.Color().setHSL(Math.random(), 1, 0.5);
+                const count = 30; // low count for performance
+                const geometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(count * 3);
+                
+                for(let i=0; i<count; i++) {
+                    // Start at center (approx camera view center slightly up)
+                    this.particles.push({
+                        vx: (Math.random() - 0.5) * 0.5,
+                        vy: (Math.random() - 0.5) * 0.5,
+                        vz: (Math.random() - 0.5) * 0.5,
+                        life: 1.0 + Math.random() * 0.5
+                    });
+                    positions[i*3] = 0; positions[i*3+1] = CONFIG.treeHeight/2; positions[i*3+2] = 0;
+                }
+                
+                geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                this.mesh = new THREE.Points(geometry, new THREE.PointsMaterial({
+                    color: color, size: 0.8, map: particleTex, 
+                    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+                }));
+                scene.add(this.mesh);
+                this.active = true;
+            }
+
+            update() {
+                if(!this.active) return;
+                const positions = this.mesh.geometry.attributes.position.array;
+                let aliveCount = 0;
+
+                for(let i=0; i<this.particles.length; i++) {
+                    const p = this.particles[i];
+                    if(p.life > 0) {
+                        p.life -= 0.02;
+                        p.vy -= 0.005; // Gravity
+                        
+                        positions[i*3] += p.vx;
+                        positions[i*3+1] += p.vy;
+                        positions[i*3+2] += p.vz;
+                        aliveCount++;
+                    } else {
+                        // Move out of view
+                        positions[i*3+1] = -999;
+                    }
+                }
+                this.mesh.geometry.attributes.position.needsUpdate = true;
+                this.mesh.material.opacity -= 0.01;
+                
+                if(aliveCount === 0 || this.mesh.material.opacity <= 0) {
+                    scene.remove(this.mesh);
+                    this.active = false;
+                    this.mesh.geometry.dispose();
+                }
+            }
+        }
+        let fireworks = [];
+
+        function triggerFireworks() {
+            for(let i=0; i<3; i++) {
+                setTimeout(() => fireworks.push(new Firework()), i * 300);
+            }
+        }
+
+        function calculateSpherePosition(index, total) {
+            const phi = Math.acos(-1 + (2 * index) / total);
+            const theta = Math.sqrt(total * Math.PI) * phi;
+            const r = 15; // Sphere radius (in front of camera)
+            
+            // Sphere centered at origin
+            const x = r * Math.cos(theta) * Math.sin(phi);
+            const y = r * Math.sin(theta) * Math.sin(phi);
+            const z = r * Math.cos(phi);
+            
+            // We want the sphere to form around the target point of controls or origin, 
+            // but facing camera. 
+            // For simplicity: Form a sphere at origin (0, CONFIG.treeHeight/2, 0)
+            return new THREE.Vector3(x, y + CONFIG.treeHeight/2, z);
+        }
+
+        function toggleExplosion() {
+            STATE.isExploded = !STATE.isExploded;
+
+            // Tree Leaf Animation
+            // We scale the leafSystem group or specific mesh
+            // A simple scale-up and fade-out looks like "scattering"
+            const targetScale = STATE.isExploded ? 3.0 : 1.0;
+            const targetOpacity = STATE.isExploded ? 0.1 : 0.9;
+            const targetLightsScale = STATE.isExploded ? 3.0 : 1.0;
+
+            new TWEEN.Tween(leafSystem.scale)
+                .to({ x: targetScale, y: targetScale, z: targetScale }, 2000)
+                .easing(TWEEN.Easing.Cubic.InOut)
+                .start();
+            
+            new TWEEN.Tween(leafMat)
+                .to({ opacity: targetOpacity }, 2000)
+                .easing(TWEEN.Easing.Cubic.InOut)
+                .start();
+
+            // Lights Scatter
+            // We can scale the lights group too, but let's just fade them
+            new TWEEN.Tween(lightsMesh.scale)
+                .to({x: targetLightsScale, y:targetLightsScale, z:targetLightsScale}, 2000)
+                .easing(TWEEN.Easing.Cubic.InOut)
+                .start();
+
+            // Photos Animation
+            if (STATE.photos.length > 0) {
+                STATE.photos.forEach((photo, idx) => {
+                    let targetPos, targetRot;
+                    
+                    if (STATE.isExploded) {
+                        // Sphere arrangement
+                        const spherePos = calculateSpherePosition(idx, STATE.photos.length);
+                        targetPos = spherePos;
+                        // Rotation will be handled in loop to look at camera
+                    } else {
+                        // Return to tree
+                        targetPos = photo.userData.treePos;
+                        targetRot = photo.userData.treeRot;
+                    }
+
+                    new TWEEN.Tween(photo.position)
+                        .to({ x: targetPos.x, y: targetPos.y, z: targetPos.z }, 1500 + Math.random()*500)
+                        .easing(TWEEN.Easing.Back.Out)
+                        .start();
+
+                    if (!STATE.isExploded) {
+                        new TWEEN.Tween(photo.rotation)
+                            .to({ x: targetRot.x, y: targetRot.y, z: targetRot.z }, 1500)
+                            .start();
+                    }
+                });
+            }
+
+            if(STATE.isExploded) {
+                triggerFireworks();
+            }
+        }
+
+        // --- Main Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Skip if page hidden
+            if(document.hidden) return;
+
+            const time = clock.getElapsedTime();
+            const delta = clock.getDelta();
+
+            TWEEN.update();
+            controls.update();
+
+            // Star breathing
+            starMat.uniforms.time.value = time;
+
+            // Lights Blinking
+            const lightColor = new THREE.Color();
+            for(let i=0; i<CONFIG.lightCount; i++) {
+                const phase = lightPhases[i];
+                // Sine wave blinking
+                const intensity = (Math.sin(time * 3 + phase) + 1) * 0.5 + 0.2; 
+                lightsMesh.getColorAt(i, lightColor);
+                // We can't easily change emission intensity per instance without custom shader,
+                // so we just scale the mesh slightly or accept constant emission with changing color?
+                // Actually instancedMesh color affects albedo. 
+                // Let's just scale them slightly to simulate pulse.
+                const scale = 1.0 + intensity * 0.3;
+                
+                const matrix = new THREE.Matrix4();
+                lightsMesh.getMatrixAt(i, matrix);
+                const pos = new THREE.Vector3();
+                const rot = new THREE.Quaternion();
+                const scl = new THREE.Vector3();
+                matrix.decompose(pos, rot, scl);
+                
+                // Rebuild matrix
+                matrix.compose(pos, rot, new THREE.Vector3(scale, scale, scale));
+                lightsMesh.setMatrixAt(i, matrix);
+            }
+            lightsMesh.instanceMatrix.needsUpdate = true;
+
+            // Top Star Pulse & Rotate
+            topStar.rotation.y = time * 0.5;
+            const starPulse = 1 + Math.sin(time * 2) * 0.1;
+            topStar.scale.set(starPulse, starPulse, starPulse);
+
+            // Photos Logic
+            STATE.photos.forEach(photo => {
+                if(STATE.isExploded) {
+                    // Look at camera
+                    photo.look
