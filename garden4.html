@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 月下花園 - 溫情守望版</title>
+    <!-- 引入 MediaPipe Hands 庫 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <!-- 使用 Tailwind CSS 進行樣式設計 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入 Google Fonts 用於詩句字體 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* 畫布鏡像翻轉，讓操作符合直覺 */
+        canvas {
+            display: block;
+            transform: scaleX(-1); 
+        }
+
+        /* 隱藏原始視頻元素 */
+        .input_video {
+            display: none;
+        }
+
+        /* UI 控件樣式 */
+        .ui-controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.4);
+            transform: scale(1.05);
+            box-shadow: 0 6px 8px rgba(0,0,0,0.2);
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: black;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 20;
+            flex-direction: column;
+        }
+
+        .instruction {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.8);
+            background: linear-gradient(90deg, transparent, rgba(0,0,0,0.7), transparent);
+            padding: 10px 40px;
+            border-radius: 20px;
+            pointer-events: none;
+            text-align: center;
+            z-index: 5;
+            text-shadow: 0 0 10px rgba(255,255,255,0.5);
+        }
+
+        /* 音樂控制區 */
+        .music-player {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            align-items: flex-end;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container">
+        <!-- 畫布 -->
+        <canvas id="output_canvas"></canvas>
+        
+        <!-- 視頻輸入 (隱藏) -->
+        <video class="input_video"></video>
+
+        <!-- UI 控件 -->
+        <div class="ui-controls">
+            <div class="music-player">
+                <label class="btn">
+                    <span>🎵 上載背景音樂</span>
+                    <input type="file" id="music-upload" accept="audio/*" style="display: none;">
+                </label>
+                <!-- 播放控制按鈕 -->
+                <button class="btn" id="music-toggle" style="display: none; background-color: rgba(100, 255, 100, 0.3);">
+                    ▶️ 播放音樂
+                </button>
+            </div>
+            
+            <button class="btn" onclick="flowers = [];">
+                🧹 清除花園
+            </button>
+        </div>
+
+        <!-- 指引文字 -->
+        <div class="instruction">
+            <p class="text-xl font-light tracking-widest">捏合手指抓取種子 · 放開手指綻放奇蹟</p>
+        </div>
+
+        <!-- 加載畫面 -->
+        <div class="loading-overlay" id="loading">
+            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
+            <p>正在啟動 AI 視覺引擎...</p>
+            <p class="text-sm text-gray-400 mt-2">請允許攝像頭權限</p>
+        </div>
+    </div>
+
+    <audio id="bg-music" loop></audio>
+
+    <script>
+        // --- 變量定義 ---
+        const videoElement = document.getElementsByClassName('input_video')[0];
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingScreen = document.getElementById('loading');
+        
+        // 音頻控制
+        const musicUpload = document.getElementById('music-upload');
+        const musicToggle = document.getElementById('music-toggle');
+        const bgMusic = document.getElementById('bg-music');
+        let isMusicPlaying = false;
+
+        // 應用狀態
+        let width, height;
+        let particles = []; // 流星
+        let flowers = [];   // 花朵
+        let stars = [];     // 背景星星
+        let snail;          // 蝸牛
+        let handPosition = { x: 0, y: 0, pinch: false };
+        let lastPinchState = false; 
+
+        // --- 初始化 ---
+        function resize() {
+            width = canvasElement.width = window.innerWidth;
+            height = canvasElement.height = window.innerHeight;
+            initStars();
+            // 初始化蝸牛位置
+            if (!snail) snail = new Snail();
+            snail.y = height - 30; // 確保蝸牛在底部
+        }
+        window.addEventListener('resize', resize);
+        
+        // --- 視覺元素類別 ---
+
+        // 1. 背景星星
+        function initStars() {
+            stars = [];
+            for(let i=0; i<150; i++) {
+                stars.push({
+                    x: Math.random() * width,
+                    y: Math.random() * height,
+                    size: Math.random() * 1.5,
+                    alpha: Math.random(),
+                    twinkleSpeed: 0.02 + Math.random() * 0.05
+                });
+            }
+        }
+
+        // 2. 流星
+        class Meteor {
+            constructor() {
+                this.reset();
+            }
+            reset() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height * 0.4; 
+                this.len = Math.random() * 80 + 20;
+                this.speed = Math.random() * 15 + 10;
+                this.size = Math.random() * 2 + 0.5;
+                this.angle = Math.PI / 4; 
+                this.opacity = 0;
+                this.active = false;
+                if(Math.random() < 0.01) this.active = true;
+            }
+            update() {
+                if(!this.active) {
+                    if(Math.random() < 0.008) { 
+                        this.active = true;
+                        this.opacity = 1;
+                        this.x = Math.random() * width;
+                        this.y = -100;
+                    }
+                    return;
+                }
+
+                this.x -= this.speed * Math.cos(this.angle); 
+                this.y += this.speed * Math.sin(this.angle); 
+                this.opacity -= 0.02;
+
+                if (this.y > height || this.x < 0 || this.opacity <= 0) {
+                    this.active = false;
+                }
+            }
+            draw() {
+                if(!this.active) return;
+                canvasCtx.save();
+                const grad = canvasCtx.createLinearGradient(this.x, this.y, this.x + this.len * Math.cos(this.angle), this.y - this.len * Math.sin(this.angle));
+                grad.addColorStop(0, `rgba(255, 255, 255, ${this.opacity})`);
+                grad.addColorStop(1, `rgba(255, 255, 255, 0)`);
+                
+                canvasCtx.strokeStyle = grad;
+                canvasCtx.lineWidth = this.size;
+                canvasCtx.lineCap = 'round';
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(this.x, this.y);
+                canvasCtx.lineTo(this.x + this.len * Math.cos(this.angle), this.y - this.len * Math.sin(this.angle)); 
+                canvasCtx.stroke();
+                
+                canvasCtx.shadowBlur = 15;
+                canvasCtx.shadowColor = '#FFFFFF';
+                canvasCtx.restore();
+            }
+        }
+
+        for(let i=0; i<6; i++) particles.push(new Meteor());
+
+        // 3. 蝸牛類別
+        class Snail {
+            constructor() {
+                this.x = 0;
+                this.y = 0;
+                this.size = 20;
+                this.speed = 0.5;
+                this.direction = 1; 
+                this.wobble = 0;
+            }
+
+            update() {
+                this.x += this.speed * this.direction;
+                this.wobble += 0.1;
+                // 邊界檢查
+                if (this.x > width + 50) this.direction = -1;
+                else if (this.x < -50) this.direction = 1;
+            }
+
+            draw() {
+                canvasCtx.save();
+                canvasCtx.translate(this.x, this.y);
+                
+                // 處理鏡像和方向
+                // 先抵消主畫布的鏡像
+                canvasCtx.scale(-1, 1);
+                // 根據行走方向翻轉
+                if (this.direction === 1) canvasCtx.scale(-1, 1); 
+
+                // 身體
+                canvasCtx.fillStyle = '#D2B48C'; 
+                canvasCtx.beginPath();
+                canvasCtx.ellipse(0, 5, this.size, this.size * 0.4, 0, 0, Math.PI * 2);
+                canvasCtx.fill();
+
+                // 頭部
+                canvasCtx.beginPath();
+                canvasCtx.arc(this.size * 0.8, -this.size * 0.2, this.size * 0.4, 0, Math.PI * 2);
+                canvasCtx.fill();
+
+                // 觸角
+                canvasCtx.strokeStyle = '#D2B48C';
+                canvasCtx.lineWidth = 2;
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(this.size * 1.0, -this.size * 0.5);
+                canvasCtx.lineTo(this.size * 1.2, -this.size * 1.0);
+                canvasCtx.moveTo(this.size * 0.6, -this.size * 0.5);
+                canvasCtx.lineTo(this.size * 0.8, -this.size * 1.0);
+                canvasCtx.stroke();
+
+                // 殼
+                canvasCtx.fillStyle = '#8B4513';
+                canvasCtx.beginPath();
+                canvasCtx.arc(0, -this.size * 0.5, this.size * 0.7, 0, Math.PI * 2);
+                canvasCtx.fill();
+                
+                // 螺旋紋
+                canvasCtx.strokeStyle = '#DEB887';
+                canvasCtx.lineWidth = 2;
+                canvasCtx.beginPath();
+                for (let i = 0; i < 3; i++) {
+                     canvasCtx.arc(0, -this.size * 0.5, this.size * 0.2 * (i+1), 0, Math.PI + i, false);
+                }
+                canvasCtx.stroke();
+                canvasCtx.restore();
+            }
+        }
+
+        // 4. 花朵類別
+        class Flower {
+            constructor(x) {
+                this.x = x;
+                this.y = height;
+                this.targetHeight = Math.random() * 250 + 150;
+                this.currentHeight = 0;
+                
+                // 0: 櫻花, 1: 向日葵, 2: 玫瑰, 3: 薰衣草
+                this.type = Math.floor(Math.random() * 4); 
+
+                if (this.type === 0) { // 櫻花
+                    this.petalColor = '#FFC0CB'; 
+                    this.centerColor = '#D81B60'; 
+                    this.stemColor = '#5D4037';   
+                    this.maxBloomSize = 30 + Math.random() * 5;
+                } else if (this.type === 1) { // 向日葵
+                    this.petalColor = '#FFD700'; 
+                    this.centerColor = '#4B3621'; 
+                    this.stemColor = '#228B22';   
+                    this.maxBloomSize = 45 + Math.random() * 10;
+                } else if (this.type === 2) { // 玫瑰
+                    const r = Math.random();
+                    this.petalColor = r < 0.5 ? '#DC143C' : (r < 0.8 ? '#FF69B4' : '#FFF0F5');
+                    this.stemColor = '#006400'; 
+                    this.maxBloomSize = 35 + Math.random() * 8;
+                } else { // 薰衣草
+                    this.petalColor = Math.random() > 0.5 ? '#9370DB' : '#7B68EE'; 
+                    this.stemColor = '#556B2F'; 
+                    this.maxBloomSize = 50; 
+                }
+                this.currentBloomSize = 0;
+                this.swaySpeed = 0.001 + Math.random() * 0.002;
+                this.swayOffset = Math.random() * Math.PI * 2;
+                this.leafLeft = Math.random() > 0.2;
+                this.leafRight = Math.random() > 0.2;
+            }
+
+            update() {
+                if (this.currentHeight < this.targetHeight) {
+                    this.currentHeight += (this.targetHeight - this.currentHeight) * 0.05;
+                } 
+                if (this.currentHeight > this.targetHeight * 0.6) {
+                     if (this.currentBloomSize < this.maxBloomSize) {
+                        this.currentBloomSize += (this.maxBloomSize - this.currentBloomSize) * 0.04;
+                    }
+                }
+            }
+
+            draw() {
+                canvasCtx.save();
+                const sway = Math.sin(Date.now() * this.swaySpeed + this.swayOffset) * 10;
+                const tipX = this.x + sway;
+                const tipY = height - this.currentHeight;
+
+                canvasCtx.strokeStyle = this.stemColor;
+                canvasCtx.lineCap = 'round';
+                
+                // 畫莖
+                if (this.type === 1) { 
+                    canvasCtx.lineWidth = 6;
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(this.x, height);
+                    canvasCtx.quadraticCurveTo(this.x + sway/4, height - this.currentHeight/2, tipX, tipY);
+                    canvasCtx.stroke();
+                } else if (this.type === 3) { 
+                    canvasCtx.lineWidth = 3;
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(this.x, height);
+                    canvasCtx.lineTo(tipX, tipY);
+                    canvasCtx.stroke();
+                } else { 
+                    canvasCtx.lineWidth = 4;
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(this.x, height);
+                    canvasCtx.quadraticCurveTo(this.x + sway/2, height - this.currentHeight/2, tipX, tipY);
+                    canvasCtx.stroke();
+                }
+
+                // 畫葉子 (向上生長)
+                if (this.currentHeight > 60) {
+                    canvasCtx.fillStyle = this.stemColor;
+                    if (this.type === 1) { 
+                        this.drawHeartLeaf(this.x + sway*0.2 - 5, height - this.currentHeight * 0.4, -0.8, 25);
+                        this.drawHeartLeaf(this.x + sway*0.2 + 5, height - this.currentHeight * 0.5, 0.8, 25);
+                    } else if (this.type === 2) { 
+                         if (this.leafLeft) this.drawSerratedLeaf(this.x + sway*0.2, height - this.currentHeight * 0.3, -1, 12);
+                         if (this.leafRight) this.drawSerratedLeaf(this.x + sway*0.2, height - this.currentHeight * 0.5, 1, 12);
+                    } else if (this.type === 3) { 
+                         this.drawThinLeaf(this.x, height - 30, -0.6, 18);
+                         this.drawThinLeaf(this.x, height - 30, 0.6, 18);
+                         this.drawThinLeaf(this.x, height - 50, -0.5, 14);
+                         this.drawThinLeaf(this.x, height - 50, 0.5, 14);
+                    } else { 
+                        if (this.leafLeft) this.drawGenericLeaf(this.x + sway/3 - 5, height - this.currentHeight * 0.3, -1, 10);
+                        if (this.leafRight) this.drawGenericLeaf(this.x + sway/3 + 5, height - this.currentHeight * 0.5, 1, 10);
+                    }
+                }
+
+                // 畫花
+                if (this.currentBloomSize > 1) {
+                    canvasCtx.translate(tipX, tipY);
+                    if (this.type === 0) { // 櫻花
+                        canvasCtx.rotate(sway * 0.02);
+                        canvasCtx.fillStyle = this.petalColor;
+                        for(let i=0; i<5; i++) {
+                            canvasCtx.save();
+                            canvasCtx.rotate(i * Math.PI * 2 / 5);
+                            canvasCtx.beginPath();
+                            const s = this.currentBloomSize;
+                            canvasCtx.moveTo(0,0);
+                            canvasCtx.bezierCurveTo(-s*0.3, -s*0.3, -s*0.8, -s*0.8, 0, -s * 1.2); 
+                            canvasCtx.lineTo(0, -s * 1.0); canvasCtx.lineTo(0, -s * 1.2);
+                            canvasCtx.bezierCurveTo(s*0.8, -s*0.8, s*0.3, -s*0.3, 0, 0);
+                            canvasCtx.fill();
+                            canvasCtx.restore();
+                        }
+                        canvasCtx.fillStyle = '#FF69B4'; canvasCtx.beginPath(); canvasCtx.arc(0, 0, this.currentBloomSize * 0.15, 0, Math.PI*2); canvasCtx.fill();
+                        canvasCtx.strokeStyle = this.centerColor; canvasCtx.fillStyle = '#FFFF00'; canvasCtx.lineWidth = 1;
+                        for(let j=0; j<5; j++){
+                            canvasCtx.save(); canvasCtx.rotate(j * Math.PI * 2 / 5 + Math.PI/5); 
+                            canvasCtx.beginPath(); canvasCtx.moveTo(0,0); canvasCtx.lineTo(0, this.currentBloomSize * 0.4); canvasCtx.stroke();
+                            canvasCtx.beginPath(); canvasCtx.arc(0, this.currentBloomSize * 0.4, 2, 0, Math.PI*2); canvasCtx.fill(); canvasCtx.restore();
+                        }
+                    } else if (this.type === 1) { // 向日葵
+                        canvasCtx.rotate(sway * 0.01 + Math.PI/4); 
+                        canvasCtx.fillStyle = this.petalColor;
+                        for(let i=0; i<18; i++) {
+                            canvasCtx.rotate(Math.PI * 2 / 18);
+                            canvasCtx.beginPath();
+                            canvasCtx.ellipse(0, -this.currentBloomSize*0.66, this.currentBloomSize*0.25, this.currentBloomSize*0.66, 0, 0, Math.PI*2);
+                            canvasCtx.fill();
+                        }
+                        canvasCtx.fillStyle = this.centerColor; canvasCtx.beginPath(); canvasCtx.arc(0, 0, this.currentBloomSize * 0.5, 0, Math.PI*2); canvasCtx.fill();
+                        canvasCtx.strokeStyle = 'rgba(0,0,0,0.3)'; canvasCtx.lineWidth = 1; canvasCtx.beginPath();
+                        for(let r=5; r < this.currentBloomSize * 0.5; r+=5) { canvasCtx.moveTo(r, 0); canvasCtx.arc(0, 0, r, 0, Math.PI*2); } canvasCtx.stroke();
+                    } else if (this.type === 2) { // 玫瑰
+                        canvasCtx.rotate(sway * 0.02);
+                        canvasCtx.fillStyle = this.petalColor; canvasCtx.strokeStyle = 'rgba(0,0,0,0.15)'; canvasCtx.lineWidth = 1;
+                        for(let i=0; i<3; i++) { canvasCtx.save(); canvasCtx.rotate(i * Math.PI * 2 / 3); canvasCtx.beginPath(); canvasCtx.arc(0, -this.currentBloomSize * 0.4, this.currentBloomSize * 0.6, 0, Math.PI, true); canvasCtx.fill(); canvasCtx.stroke(); canvasCtx.restore(); }
+                        canvasCtx.save(); canvasCtx.rotate(Math.PI/3); for(let i=0; i<3; i++) { canvasCtx.save(); canvasCtx.rotate(i * Math.PI * 2 / 3); canvasCtx.beginPath(); canvasCtx.arc(0, -this.currentBloomSize * 0.3, this.currentBloomSize * 0.4, 0, Math.PI, true); canvasCtx.fill(); canvasCtx.stroke(); canvasCtx.restore(); } canvasCtx.restore();
+                        canvasCtx.fillStyle = this.petalColor; canvasCtx.beginPath(); canvasCtx.arc(0, 0, this.currentBloomSize * 0.35, 0, Math.PI * 2); canvasCtx.fill();
+                        canvasCtx.strokeStyle = '#8B0000'; canvasCtx.lineWidth = 1.5; canvasCtx.beginPath();
+                        for(let r=2; r < this.currentBloomSize * 0.3; r+=3) { canvasCtx.moveTo(r, 0); canvasCtx.arc(0, 0, r, 0, Math.PI * 1.5); } canvasCtx.stroke();
+                    } else if (this.type === 3) { // 薰衣草
+                        canvasCtx.rotate(-sway * 0.02); canvasCtx.fillStyle = this.petalColor;
+                        const spikeHeight = this.currentBloomSize * 1.5;
+                        for(let i=0; i<10; i++) {
+                            const yPos = -i * (spikeHeight/10); const scale = 1 - (i / 10) * 0.6; const wid = 8 * scale; const hgt = 10 * scale;
+                            canvasCtx.beginPath(); canvasCtx.ellipse(-wid/1.5, yPos, wid, hgt, -0.3, 0, Math.PI*2); canvasCtx.fill();
+                            canvasCtx.beginPath(); canvasCtx.ellipse(wid/1.5, yPos, wid, hgt, 0.3, 0, Math.PI*2); canvasCtx.fill();
+                            canvasCtx.beginPath(); canvasCtx.ellipse(0, yPos - 2, wid, hgt, 0, 0, Math.PI*2); canvasCtx.fill();
+                        }
+                    }
+                    canvasCtx.restore();
+                }
+                canvasCtx.restore();
+            }
+
+            drawHeartLeaf(x, y, dir, size) {
+                canvasCtx.save(); canvasCtx.translate(x, y); canvasCtx.rotate(dir * 0.8); 
+                canvasCtx.beginPath(); canvasCtx.moveTo(0,0);
+                // Y軸反轉，向上生長
+                canvasCtx.bezierCurveTo(-size, size*0.5, -size, -size*1.5, 0, -size*2.0);
+                canvasCtx.bezierCurveTo(size, -size*1.5, size, size*0.5, 0, 0);
+                canvasCtx.fill(); canvasCtx.strokeStyle = 'rgba(0,0,0,0.2)'; canvasCtx.lineWidth = 1; canvasCtx.stroke(); canvasCtx.restore();
+            }
+            drawSerratedLeaf(x, y, dir, size) {
+                canvasCtx.save(); canvasCtx.translate(x, y); canvasCtx.rotate(dir * 1.0); 
+                canvasCtx.beginPath(); canvasCtx.moveTo(0,0);
+                const steps = 5; const len = size * 2;
+                for(let i=1; i<=steps; i++) { let lx = -size/2 * Math.sin(i/steps * Math.PI); let ly = -i * (len/steps); canvasCtx.lineTo(lx, ly); canvasCtx.lineTo(lx + 2, ly + 2); } canvasCtx.lineTo(0, -len - 5);
+                for(let i=steps; i>=1; i--) { let rx = size/2 * Math.sin(i/steps * Math.PI); let ly = -i * (len/steps); canvasCtx.lineTo(rx + 2, ly + 2); canvasCtx.lineTo(rx, ly); }
+                canvasCtx.closePath(); canvasCtx.fill(); canvasCtx.restore();
+            }
+            drawThinLeaf(x, y, dir, size) {
+                canvasCtx.save(); canvasCtx.translate(x, y); canvasCtx.rotate(dir * 0.8); 
+                canvasCtx.beginPath(); canvasCtx.ellipse(0, -size, size/6, size * 1.2, 0, 0, Math.PI*2); canvasCtx.fill(); canvasCtx.restore();
+            }
+            drawGenericLeaf(x, y, dir, size) {
+                canvasCtx.save(); canvasCtx.translate(x, y); canvasCtx.rotate(dir * 0.8); 
+                canvasCtx.beginPath(); canvasCtx.ellipse(0, -size/2, size, size/2, Math.PI/2, 0, Math.PI*2); canvasCtx.fill(); canvasCtx.restore();
+            }
+        }
+
+        // 5. 繪製輪椅小朋友 (更新為細節版)
+        function drawWheelchairChild() {
+            canvasCtx.save();
+            
+            // 位置設定：視覺右下方
+            // 由於 CSS scaleX(-1)，視覺右側對應邏輯 X 座標較小的值
+            // 且 child 應該面向月亮 (visual left / logical right)
+            const x = 150; // 邏輯座標 (Visual Right)
+            const y = height - 120; // 地面高度
+            const scale = 1.3;
+
+            canvasCtx.translate(x, y);
+            canvasCtx.scale(scale, scale);
+
+            // 1. 陰影 (Shadow)
+            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            canvasCtx.beginPath();
+            canvasCtx.ellipse(0, 45, 45, 10, 0, 0, Math.PI * 2);
+            canvasCtx.fill();
+
+            // 定義顏色
+            const colors = {
+                metal: '#A9A9A9', // DarkGray
+                plastic: '#2F4F4F', // DarkSlateGray
+                tire: '#111',
+                hoodie: '#00BFFF', // DeepSkyBlue (Bright)
+                pants: '#4682B4', // SteelBlue
+                skin: '#FFDAB9', // PeachPuff
+                hair: '#4A3728'  // Dark Brown
+            };
+
+            // 光源：邏輯上來自右上方 (width - 100)，即 Moon
+            // 在 scaleX(-1) 下，物體面向右側 (Moon)
+            // 所以 Highlight 在右側
+
+            // 2. 遠處輪子 (Far Wheel) - 較暗
+            canvasCtx.save();
+            canvasCtx.translate(-25, 10); // Offset for perspective
+            drawWheel(colors.tire, '#444', 35);
+            canvasCtx.restore();
+
+            // 3. 椅子主體結構 (Frame/Seat)
+            canvasCtx.fillStyle = colors.plastic;
+            // 座位 (Cube/Rect)
+            canvasCtx.fillRect(-20, -10, 45, 10);
+            // 靠背 (Backrest)
+            canvasCtx.fillRect(-25, -50, 10, 50);
+            // 扶手 (Armrest)
+            canvasCtx.fillStyle = colors.metal;
+            canvasCtx.fillRect(-20, -25, 45, 5);
+
+            // 4. 小朋友身體 (Body)
+            
+            // 腿部 (Legs) - 圓柱感
+            canvasCtx.fillStyle = colors.pants;
+            // 大腿
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(0, -10);
+            canvasCtx.lineTo(35, -5);
+            canvasCtx.lineTo(35, 10);
+            canvasCtx.lineTo(0, 10);
+            canvasCtx.fill();
+            // 小腿
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(35, 0);
+            canvasCtx.lineTo(40, 35); // 腳踏板位置
+            canvasCtx.lineTo(25, 35);
+            canvasCtx.lineTo(25, 0);
+            canvasCtx.fill();
+            // 腳踏板
+            canvasCtx.fillStyle = '#333';
+            canvasCtx.fillRect(20, 35, 25, 5);
+
+            // 軀幹 (Torso) - 稍微前傾，穿著亮色帽衫
+            canvasCtx.fillStyle = colors.hoodie;
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(-15, -10); // 臀部後
+            canvasCtx.quadraticCurveTo(-10, -50, 5, -55); // 背部曲線
+            canvasCtx.lineTo(25, -45); // 肩膀
+            canvasCtx.lineTo(20, -5); // 腹部
+            canvasCtx.fill();
+            // 背部摺痕細節
+            canvasCtx.strokeStyle = 'rgba(0,0,0,0.1)';
+            canvasCtx.lineWidth = 2;
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(-5, -40);
+            canvasCtx.quadraticCurveTo(0, -30, -5, -20);
+            canvasCtx.stroke();
+
+            // 手臂 (Arms) - 放鬆在扶手上
+            canvasCtx.fillStyle = colors.hoodie; // 袖子
+            canvasCtx.beginPath();
+            canvasCtx.ellipse(10, -30, 8, 20, Math.PI/6, 0, Math.PI*2); // 上臂
+            canvasCtx.fill();
+            canvasCtx.beginPath();
+            canvasCtx.ellipse(15, -15, 6, 18, -Math.PI/6, 0, Math.PI*2); // 前臂
+            canvasCtx.fill();
+            // 手 (Hand)
+            canvasCtx.fillStyle = colors.skin;
+            canvasCtx.beginPath();
+            canvasCtx.arc(22, -8, 6, 0, Math.PI*2);
+            canvasCtx.fill();
+
+            // 頭部 (Head) - 球體
+            // 脖子
+            canvasCtx.fillStyle = colors.skin;
+            canvasCtx.fillRect(10, -58, 10, 10);
+            // 頭
+            canvasCtx.beginPath();
+            canvasCtx.arc(18, -70, 16, 0, Math.PI * 2);
+            canvasCtx.fill();
+            
+            // 頭髮 (Hair) - 背影細節
+            canvasCtx.fillStyle = colors.hair;
+            canvasCtx.beginPath();
+            canvasCtx.arc(16, -72, 17, 0, Math.PI * 2); // 基礎髮型
+            canvasCtx.fill();
+            // 髮梢層次
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(5, -65);
+            canvasCtx.quadraticCurveTo(15, -55, 25, -65);
+            canvasCtx.lineTo(30, -75);
+            canvasCtx.quadraticCurveTo(15, -90, 0, -75);
+            canvasCtx.fill();
+
+            // 5. 近處輪子 (Near Wheel) - 詳盡細節
+            canvasCtx.save();
+            canvasCtx.translate(0, 10);
+            drawWheel(colors.tire, colors.metal, 38, true);
+            canvasCtx.restore();
+            
+            // 6. 前輪 (Front Wheel)
+            canvasCtx.save();
+            canvasCtx.translate(40, 40);
+            drawWheel(colors.tire, '#555', 12, true);
+            canvasCtx.restore();
+
+            // 7. 邊緣光 (Rim Light) - 來自月亮 (Logical Right/Top)
+            // 在物體右側邊緣畫亮光
+            canvasCtx.strokeStyle = 'rgba(255, 255, 220, 0.5)';
+            canvasCtx.lineWidth = 2;
+            canvasCtx.lineCap = 'round';
+            
+            // 頭頂光
+            canvasCtx.beginPath(); canvasCtx.arc(18, -70, 16, -Math.PI/2, 0); canvasCtx.stroke();
+            // 肩膀光
+            canvasCtx.beginPath(); canvasCtx.moveTo(10, -55); canvasCtx.quadraticCurveTo(20, -55, 28, -45); canvasCtx.stroke();
+            // 膝蓋/腿光
+            canvasCtx.beginPath(); canvasCtx.moveTo(25, -5); canvasCtx.lineTo(35, -5); canvasCtx.lineTo(40, 20); canvasCtx.stroke();
+            // 輪椅金屬反光
+            canvasCtx.beginPath(); canvasCtx.moveTo(-20, -25); canvasCtx.lineTo(25, -25); canvasCtx.stroke();
+
+            canvasCtx.restore();
+        }
+
+        // 輔助函數：畫輪子
+        function drawWheel(tireColor, rimColor, radius, spokes = false) {
+            // 輪胎
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = tireColor;
+            canvasCtx.beginPath();
+            canvasCtx.arc(0, 0, radius, 0, Math.PI * 2);
+            canvasCtx.stroke();
+            
+            // 輪框
+            canvasCtx.lineWidth = 2;
+            canvasCtx.strokeStyle = rimColor;
+            canvasCtx.beginPath();
+            canvasCtx.arc(0, 0, radius - 4, 0, Math.PI * 2);
+            canvasCtx.stroke();
+
+            // 輻條
+            if (spokes) {
+                canvasCtx.lineWidth = 1;
+                canvasCtx.strokeStyle = 'rgba(200, 200, 200, 0.5)';
+                canvasCtx.beginPath();
+                for (let i = 0; i < 8; i++) {
+                    const angle = i * (Math.PI / 4);
+                    canvasCtx.moveTo(0, 0);
+                    canvasCtx.lineTo(Math.cos(angle) * (radius - 4), Math.sin(angle) * (radius - 4));
+                }
+                canvasCtx.stroke();
+            }
+        }
+
+        // --- 主繪圖循環 ---
+        function drawScene() {
+            // 背景
+            canvasCtx.fillStyle = 'black';
+            canvasCtx.fillRect(0, 0, width, height);
+
+            // 星星
+            stars.forEach(star => {
+                canvasCtx.fillStyle = `rgba(255, 255, 255, ${star.alpha * (0.5 + Math.sin(Date.now() * star.twinkleSpeed) * 0.5)})`;
+                canvasCtx.beginPath();
+                canvasCtx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                canvasCtx.fill();
+            });
+
+            // 月亮 (視覺左上，邏輯右上)
+            // 調整位置以容納超大月亮，避免貼邊
+            const moonX = width - 180; 
+            const moonY = 180;
+            // 再次放大尺寸 (超級月亮)
+            const moonRadius = 120; 
+            const glowRadius = 300; 
+            
+            const glow = canvasCtx.createRadialGradient(moonX, moonY, moonRadius * 0.8, moonX, moonY, glowRadius);
+            glow.addColorStop(0, 'rgba(255, 255, 240, 0.4)');
+            glow.addColorStop(1, 'rgba(255, 255, 240, 0)');
+            canvasCtx.fillStyle = glow;
+            canvasCtx.beginPath(); canvasCtx.arc(moonX, moonY, glowRadius, 0, Math.PI * 2); canvasCtx.fill();
+            
+            canvasCtx.fillStyle = '#FFFFF0'; canvasCtx.shadowColor = '#FFFFF0'; canvasCtx.shadowBlur = 15;
+            canvasCtx.beginPath(); canvasCtx.arc(moonX, moonY, moonRadius, 0, Math.PI * 2); canvasCtx.fill(); canvasCtx.shadowBlur = 0; 
+            
+            // 繪製詩句
+            canvasCtx.save();
+            canvasCtx.translate(width / 2, 60);
+            canvasCtx.scale(-1, 1); // 翻轉文字
+            canvasCtx.font = "bold 24px 'Noto Serif TC', serif";
+            canvasCtx.fillStyle = "rgba(255, 255, 255, 0.9)";
+            canvasCtx.textAlign = "center";
+            canvasCtx.shadowColor = "rgba(255, 255, 255, 0.5)";
+            canvasCtx.shadowBlur = 10;
+            canvasCtx.fillText("月雖殘、亮如雪，高掛天空誰笑缺", 0, 0);
+            canvasCtx.restore();
+
+            // 流星
+            particles.forEach(p => { p.update(); p.draw(); });
+
+            // 繪製輪椅小朋友
+            drawWheelchairChild();
+
+            // 花朵
+            flowers.forEach(flower => { flower.update(); flower.draw(); });
+            
+            // 蝸牛
+            if (snail) { snail.update(); snail.draw(); }
+
+            // 手勢視覺反饋
+            if (handPosition.visible) {
+                const x = handPosition.x * width;
+                const y = handPosition.y * height;
+
+                canvasCtx.shadowBlur = 15;
+                canvasCtx.shadowColor = handPosition.pinch ? '#00FF88' : '#FF77FF';
+                
+                if (handPosition.pinch) {
+                    canvasCtx.fillStyle = '#CCFFCC';
+                    canvasCtx.beginPath(); canvasCtx.arc(x, y, 8 + Math.sin(Date.now()*0.02)*2, 0, Math.PI * 2); canvasCtx.fill();
+                    canvasCtx.font = "24px Arial"; canvasCtx.fillStyle = "white";
+                    canvasCtx.save(); canvasCtx.scale(-1, 1); canvasCtx.fillText("🌱", -x - 10, y - 30); canvasCtx.restore();
+                } else {
+                    canvasCtx.strokeStyle = `rgba(255, 255, 255, 0.8)`; canvasCtx.lineWidth = 2;
+                    canvasCtx.setLineDash([4, 4]); canvasCtx.beginPath(); canvasCtx.arc(x, y, 25, 0, Math.PI * 2); canvasCtx.stroke(); canvasCtx.setLineDash([]);
+                    canvasCtx.fillStyle = 'white'; canvasCtx.beginPath(); canvasCtx.arc(x, y, 4, 0, Math.PI * 2); canvasCtx.fill();
+                }
+                canvasCtx.shadowBlur = 0;
+            }
+        }
+
+        // --- MediaPipe 邏輯 ---
+        function onResults(results) {
+            loadingScreen.style.display = 'none';
+            handPosition.visible = false;
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const thumbTip = landmarks[4];
+                const indexTip = landmarks[8];
+                const distance = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+                const isPinching = distance < 0.06;
+                handPosition = { x: indexTip.x, y: indexTip.y, pinch: isPinching, visible: true };
+                if (lastPinchState === true && isPinching === false) { plantFlower(handPosition.x * width); }
+                lastPinchState = isPinching;
+            }
+            drawScene();
+        }
+
+        function plantFlower(x) {
+            if (flowers.length > 40) flowers.shift();
+            flowers.push(new Flower(x));
+        }
+
+        const hands = new Hands({locateFile: (file) => { return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`; }});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 1280, height: 720
+        });
+        camera.start();
+
+        // --- 音頻 ---
+        musicUpload.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                bgMusic.src = url; bgMusic.play(); isMusicPlaying = true;
+                musicToggle.style.display = 'flex'; musicToggle.style.backgroundColor = ''; musicToggle.innerHTML = '⏸️ 暫停音樂';
+            }
+        });
+
+        musicToggle.addEventListener('click', function() {
+            if (bgMusic.src) {
+                if (bgMusic.paused) { bgMusic.play(); musicToggle.innerHTML = '⏸️ 暫停音樂'; } else { bgMusic.pause(); musicToggle.innerHTML = '▶️ 播放音樂'; }
+            } else { musicUpload.click(); }
+        });
+
+        resize();
+    </script>
+</body>
+</html>
