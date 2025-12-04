@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 空氣足球</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- TensorFlow.js Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <style>
+        body {
+            background-color: #2e7d32; /* 草地綠背景 */
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle, #4caf50 0%, #1b5e20 100%); /* 草地漸層 */
+        }
+        canvas {
+            position: absolute;
+            transform: scaleX(-1); /* 鏡像翻轉，讓操作更直觀 */
+            border-radius: 12px;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        /* 讓按鈕可以點擊 */
+        #ui-layer button {
+            pointer-events: auto;
+        }
+
+        .score-board {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px 30px;
+            border-radius: 15px;
+            text-align: right;
+            border: 2px solid #fff;
+        }
+        .score-text {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #fff;
+            line-height: 1;
+        }
+        .label {
+            font-size: 0.9rem;
+            color: #ccc;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        /* 控制按鈕樣式 */
+        .control-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        .control-btn.active {
+            background: rgba(255, 99, 71, 0.8);
+            border-color: rgba(255, 99, 71, 1);
+        }
+
+        #loading {
+            position: absolute;
+            z-index: 20;
+            background: rgba(0,0,0,0.9);
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.5s;
+        }
+        .loader {
+            border: 5px solid #333;
+            border-top: 5px solid #fff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        #instruction {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.6);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 1.2rem;
+            text-align: center;
+            width: 80%;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+        }
+
+        /* 投籃提示區 */
+        .feedback-msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 4rem;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 10px rgba(0,0,0,0.5);
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-style: italic;
+        }
+        .feedback-msg.show {
+            opacity: 1;
+            animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        @keyframes pop {
+            0% { transform: translate(-50%, -50%) scale(0.5); }
+            50% { transform: translate(-50%, -50%) scale(1.2); }
+            100% { transform: translate(-50%, -50%) scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">
+        <div class="loader"></div>
+        <h2 class="text-xl font-bold text-white">正在啟動 AI 足球引擎...</h2>
+        <p class="text-sm text-gray-400 mt-2">請允許攝像頭權限以進行遊戲</p>
+    </div>
+
+    <div id="game-container">
+        <!-- 視頻輸入 (隱藏) -->
+        <video id="video" playsinline style="display: none;"></video>
+        <!-- 遊戲畫布 -->
+        <canvas id="output"></canvas>
+        
+        <div id="ui-layer">
+            <button id="move-toggle" class="control-btn">
+                <span>⏸️ 鎖定球門位置</span>
+            </button>
+
+            <div class="score-board">
+                <div class="label">GOALS</div>
+                <div class="score-text" id="score">0</div>
+            </div>
+            
+            <div id="feedback" class="feedback-msg">GOAL!</div>
+            
+            <div id="instruction">
+                ⚽ 身體對準鏡頭，<span class="text-yellow-400 font-bold">快速向上跳起/擺動</span> 進行頭槌射門！
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * 遊戲配置與全局變量
+         */
+        let detector;
+        let video;
+        let canvas, ctx;
+        let score = 0;
+        let isModelLoaded = false;
+        let animationId;
+
+        // 遊戲狀態
+        const STATE = {
+            IDLE: 'idle',      
+            HOLDING: 'holding', 
+            SHOOTING: 'shooting'
+        };
+
+        // 足球的物理屬性
+        let ball = {
+            x: 0,
+            y: 0,
+            radius: 35, // 稍微加大一點
+            vx: 0,
+            vy: 0,
+            active: false, // 球是否在空中
+            rotation: 0
+        };
+
+        // 足球門屬性
+        let goal = {
+            x: 0,
+            y: 0,
+            width: 240, // 球門比較寬
+            height: 140, // 球門高度
+            direction: 1,
+            speed: 2,
+            isMoving: true 
+        };
+
+        // 動作檢測變量
+        let bodyYHistory = []; // 追蹤身體(鼻子)的歷史
+        let canShoot = true; // 冷卻時間控制
+
+        // 畫布尺寸
+        const VIDEO_WIDTH = 640;
+        const VIDEO_HEIGHT = 480;
+
+        /**
+         * 1. 初始化與相機設置
+         */
+        async function init() {
+            video = document.getElementById('video');
+            canvas = document.getElementById('output');
+            ctx = canvas.getContext('2d');
+
+            canvas.width = VIDEO_WIDTH;
+            canvas.height = VIDEO_HEIGHT;
+
+            // 設置球門初始位置 (頂部中間)
+            goal.x = VIDEO_WIDTH / 2 - goal.width / 2;
+            goal.y = 60; 
+
+            // 綁定按鈕事件
+            document.getElementById('move-toggle').addEventListener('click', toggleGoalMovement);
+
+            try {
+                await setupCamera();
+                await loadModel();
+                
+                // 隱藏加載畫面
+                document.getElementById('loading').style.opacity = '0';
+                setTimeout(() => {
+                    document.getElementById('loading').style.display = 'none';
+                }, 500);
+
+                startGameLoop();
+            } catch (error) {
+                console.error("初始化失敗:", error);
+                alert("無法啟動相機或 AI 模型，請檢查權限或瀏覽器支援。");
+            }
+        }
+
+        function toggleGoalMovement() {
+            goal.isMoving = !goal.isMoving;
+            const btn = document.getElementById('move-toggle');
+            if (goal.isMoving) {
+                btn.innerHTML = '<span>⏸️ 鎖定球門位置</span>';
+                btn.classList.remove('active');
+            } else {
+                btn.innerHTML = '<span>▶️ 開啟球門移動</span>';
+                btn.classList.add('active');
+            }
+        }
+
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: VIDEO_WIDTH, height: VIDEO_HEIGHT },
+                audio: false
+            });
+            video.srcObject = stream;
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    video.play();
+                    resolve();
+                };
+            });
+        }
+
+        async function loadModel() {
+            const model = poseDetection.SupportedModels.MoveNet;
+            const detectorConfig = {
+                modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING 
+            };
+            detector = await poseDetection.createDetector(model, detectorConfig);
+            isModelLoaded = true;
+        }
+
+        /**
+         * 2. 核心遊戲循環
+         */
+        async function startGameLoop() {
+            async function render() {
+                if (!isModelLoaded) return;
+
+                // A. 獲取姿勢數據
+                const poses = await detector.estimatePoses(video);
+
+                // B. 繪製視頻背景
+                ctx.save();
+                ctx.scale(-1, 1); // 鏡像繪製視頻
+                ctx.translate(-canvas.width, 0);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                ctx.restore();
+
+                // C. 遊戲邏輯與繪製
+                if (poses && poses.length > 0) {
+                    processPose(poses[0]);
+                }
+
+                updatePhysics();
+                drawGameElements();
+
+                animationId = requestAnimationFrame(render);
+            }
+            render();
+        }
+
+        /**
+         * 3. 動作識別與射門邏輯
+         */
+        function processPose(pose) {
+            // 使用「鼻子」作為身體中心點
+            const nose = pose.keypoints.find(k => k.name === 'nose');
+            
+            if (nose && nose.score > 0.3) {
+                const visualX = canvas.width - nose.x;
+                const visualY = nose.y;
+
+                // 視覺反饋
+                ctx.beginPath();
+                ctx.arc(visualX, visualY, 8, 0, 2 * Math.PI);
+                ctx.fillStyle = canShoot ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 100, 100, 0.6)';
+                ctx.fill();
+
+                // 如果球不在空中，球跟隨頭部上方 (頂球準備)
+                if (!ball.active && canShoot) {
+                    ball.x = visualX;
+                    ball.y = visualY - 80; // 球在頭頂
+                }
+
+                // --- 射門觸發 (身體快速向上) ---
+                bodyYHistory.push({ y: visualY, time: Date.now() });
+                if (bodyYHistory.length > 5) bodyYHistory.shift();
+
+                if (canShoot && !ball.active && bodyYHistory.length >= 2) {
+                    const first = bodyYHistory[0];
+                    const last = bodyYHistory[bodyYHistory.length - 1];
+                    
+                    const distY = first.y - last.y; // 正值代表向上
+                    const timeDiff = last.time - first.time;
+                    const speed = distY / timeDiff;
+
+                    // 閾值判定
+                    if (speed > 0.25 && distY > 20) {
+                        shootBall(visualX, visualY - 80, speed);
+                    }
+                }
+            }
+        }
+
+        function shootBall(startX, startY, speed) {
+            ball.active = true;
+            canShoot = false; 
+            
+            ball.x = startX;
+            ball.y = startY;
+            
+            const power = Math.min(speed * 45, 30); 
+            ball.vy = -power; 
+
+            // 水平瞄準修正
+            const screenCenter = canvas.width / 2;
+            const deviation = (screenCenter - startX) * 0.04;
+            ball.vx = deviation; 
+        }
+
+        /**
+         * 4. 物理與遊戲更新
+         */
+        function updatePhysics() {
+            // 球門移動
+            if (goal.isMoving) {
+                goal.x += goal.speed * goal.direction;
+                if (goal.x <= 20 || goal.x + goal.width >= canvas.width - 20) {
+                    goal.direction *= -1;
+                }
+            }
+
+            // 球物理
+            if (ball.active) {
+                ball.x += ball.vx;
+                ball.y += ball.vy;
+                ball.vy += 0.8; // 重力
+                ball.rotation += 0.15;
+
+                // 邊界檢查
+                if (ball.y > canvas.height + 50 || ball.x < -50 || ball.x > canvas.width + 50) {
+                    resetBall();
+                }
+
+                checkScore();
+            }
+        }
+
+        function checkScore() {
+            // 足球進球判定 (矩形範圍)
+            const goalLeft = goal.x;
+            const goalRight = goal.x + goal.width;
+            const goalTop = goal.y;
+            const goalBottom = goal.y + goal.height;
+
+            // 縮小判定範圍，讓球必須進入門框內部
+            if (ball.x > goalLeft + 15 && ball.x < goalRight - 15 &&
+                ball.y > goalTop + 15 && ball.y < goalBottom) {
+                
+                // 只有當球在運動且進入區域時算分
+                if(ball.vy < 0 || ball.vy > 0) {
+                     // 進球！
+                    score++;
+                    document.getElementById('score').innerText = score;
+                    showFeedback("GOAL!");
+                    
+                    // 增加難度
+                    if (goal.isMoving) goal.speed += 0.2;
+                    
+                    // 強制重置球，防止重複算分
+                    ball.active = false; 
+                    setTimeout(resetBall, 100); 
+                    return;
+                }
+            }
+        }
+
+        function resetBall() {
+            ball.active = false;
+            ball.vx = 0;
+            ball.vy = 0;
+            setTimeout(() => {
+                canShoot = true;
+            }, 500);
+        }
+
+        function showFeedback(text) {
+            const el = document.getElementById('feedback');
+            el.innerText = text;
+            el.classList.add('show');
+            setTimeout(() => {
+                el.classList.remove('show');
+            }, 1000);
+        }
+
+        /**
+         * 5. 繪製元素
+         */
+        function drawGameElements() {
+            
+            // --- 繪製立體足球門 ---
+            ctx.save();
+            
+            // 定義球門透視點
+            const gx = goal.x;
+            const gy = goal.y;
+            const gw = goal.width;
+            const gh = goal.height;
+            const depth = 35; // 深度
+            const offset = 20; // 後方框架內縮量
+
+            // 前框座標
+            const p1 = {x: gx, y: gy}; // 左上
+            const p2 = {x: gx + gw, y: gy}; // 右上
+            const p3 = {x: gx + gw, y: gy + gh}; // 右下
+            const p4 = {x: gx, y: gy + gh}; // 左下
+
+            // 後框座標 (稍微內縮並偏移，製造3D感)
+            const p1b = {x: gx + offset, y: gy + depth}; // 後左上
+            const p2b = {x: gx + gw - offset, y: gy + depth}; // 後右上
+            const p3b = {x: gx + gw - offset, y: gy + gh - 5}; // 後右下
+            const p4b = {x: gx + offset, y: gy + gh - 5}; // 後左下
+
+            // 1. 繪製球網 (Net)
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+            ctx.lineWidth = 1;
+
+            // 垂直網線
+            const netCols = 12;
+            for(let i=0; i<=netCols; i++) {
+                const t = i / netCols;
+                // 前方點
+                const fx = p1.x + (p2.x - p1.x) * t;
+                const fy = p1.y;
+                // 後方點
+                const bx = p1b.x + (p2b.x - p1b.x) * t;
+                const by = p1b.y;
+                
+                // 畫頂部網
+                ctx.moveTo(fx, fy);
+                ctx.lineTo(bx, by);
+                
+                // 畫後方網 (垂直落下)
+                ctx.lineTo(bx, p3b.y);
+            }
+            
+            // 水平網線 (後方與頂部)
+            const netRows = 8;
+            // 頂部橫線
+            for(let i=0; i<=4; i++) {
+                const t = i / 4;
+                const lx = p1.x + (p1b.x - p1.x) * t;
+                const ly = p1.y + (p1b.y - p1.y) * t;
+                const rx = p2.x + (p2b.x - p2.x) * t;
+                const ry = p2.y + (p2b.y - p2.y) * t;
+                ctx.moveTo(lx, ly);
+                ctx.lineTo(rx, ry);
+            }
+            // 後方橫線
+            for(let i=0; i<=netRows; i++) {
+                const t = i / netRows;
+                const ly = p1b.y + (p4b.y - p1b.y) * t;
+                const ry = p2b.y + (p3b.y - p2b.y) * t;
+                ctx.moveTo(p1b.x, ly); // 簡單化，直接連左右
+                ctx.lineTo(p2b.x, ry);
+            }
+            ctx.stroke();
+
+            // 2. 後方框架 (Back Support - 較細)
+            ctx.beginPath();
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = 4;
+            ctx.moveTo(p4b.x, p4b.y); // 左下
+            ctx.lineTo(p1b.x, p1b.y); // 左上
+            ctx.lineTo(p2b.x, p2b.y); // 右上
+            ctx.lineTo(p3b.x, p3b.y); // 右下
+            ctx.stroke();
+
+            // 3. 底部支撐 (Ground Support)
+            ctx.beginPath();
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = 4;
+            ctx.moveTo(p4.x, p4.y);
+            ctx.lineTo(p4b.x, p4b.y); // 左底連線
+            ctx.moveTo(p3.x, p3.y);
+            ctx.lineTo(p3b.x, p3b.y); // 右底連線
+            ctx.stroke();
+
+            // 4. 前方金屬框架 (Front Metal Frame)
+            // 使用矩形填充而非線條，以便做金屬漸層
+            const postW = 10;
+            
+            // 上橫樑 (Top Bar)
+            const barGrad = ctx.createLinearGradient(0, gy, 0, gy + postW);
+            barGrad.addColorStop(0, '#fff');
+            barGrad.addColorStop(0.5, '#e0e0e0');
+            barGrad.addColorStop(1, '#9e9e9e');
+            
+            // 左門柱 (Left Post)
+            const leftGrad = ctx.createLinearGradient(gx, 0, gx + postW, 0);
+            leftGrad.addColorStop(0, '#fff');
+            leftGrad.addColorStop(0.5, '#e0e0e0');
+            leftGrad.addColorStop(1, '#9e9e9e');
+
+            // 右門柱 (Right Post)
+            const rightGrad = ctx.createLinearGradient(gx + gw - postW, 0, gx + gw, 0);
+            rightGrad.addColorStop(0, '#fff');
+            rightGrad.addColorStop(0.5, '#e0e0e0');
+            rightGrad.addColorStop(1, '#9e9e9e');
+
+            // 繪製
+            ctx.fillStyle = leftGrad;
+            ctx.fillRect(gx, gy, postW, gh); // 左
+            
+            ctx.fillStyle = rightGrad;
+            ctx.fillRect(gx + gw - postW, gy, postW, gh); // 右
+            
+            ctx.fillStyle = barGrad;
+            ctx.fillRect(gx, gy, gw, postW); // 上
+
+            // 圓角接合處
+            ctx.beginPath();
+            ctx.arc(gx + postW/2, gy + postW/2, postW/2, 0, Math.PI*2);
+            ctx.arc(gx + gw - postW/2, gy + postW/2, postW/2, 0, Math.PI*2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+
+            ctx.restore();
+
+
+            // --- 繪製經典足球 (Classic Soccer Ball) ---
+            if (ball.active || canShoot) {
+                ctx.save();
+                ctx.translate(ball.x, ball.y);
+                ctx.rotate(ball.rotation);
+                
+                // 1. 繪製球體背景 (底色)
+                ctx.beginPath();
+                ctx.arc(0, 0, ball.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#f0f0f0';
+                ctx.fill();
+
+                // 2. 建立剪裁區域 (Clipping) - 確保五邊形不超出球體
+                ctx.save(); // 保存狀態以限制剪裁範圍
+                ctx.beginPath();
+                ctx.arc(0, 0, ball.radius, 0, Math.PI * 2);
+                ctx.clip(); // <--- 關鍵修改：將後續繪製限制在圓形內
+
+                // 3. 球體陰影 (移到紋理層，這樣五邊形也會有陰影)
+                let grad = ctx.createRadialGradient(-10, -10, 5, 0, 0, ball.radius);
+                grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+                grad.addColorStop(0.8, 'rgba(230,230,230,0)');
+                grad.addColorStop(1, 'rgba(0,0,0,0.15)');
+                
+                // 繪製五邊形與連接線 (構成六邊形)
+                ctx.fillStyle = '#222';
+                ctx.strokeStyle = '#ccc'; // 縫線顏色
+                ctx.lineWidth = 1.5;
+                ctx.lineJoin = 'round';
+                
+                // 中心黑色五邊形
+                drawPentagon(ctx, 0, 0, ball.radius * 0.4, true);
+                
+                // 周圍的黑色五邊形
+                const outerDist = ball.radius * 0.88;
+                const pentSize = ball.radius * 0.35;
+                
+                for(let i=0; i<5; i++) {
+                    const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2; // 從上方開始
+                    const px = Math.cos(angle) * outerDist;
+                    const py = Math.sin(angle) * outerDist;
+                    
+                    // 為了讓外圍五邊形看起來貼在球面上，可以稍微旋轉它們
+                    ctx.save();
+                    ctx.translate(px, py);
+                    ctx.rotate(angle + Math.PI/2); // 旋轉使其指向中心
+                    drawPentagon(ctx, 0, 0, pentSize, true);
+                    ctx.restore();
+                    
+                    // 縫線
+                    const innerAngle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+                    const ix = Math.cos(innerAngle) * (ball.radius * 0.4);
+                    const iy = Math.sin(innerAngle) * (ball.radius * 0.4);
+                    
+                    const seamDist = ball.radius * 0.65;
+                    const seamAngle = innerAngle;
+                    const sx = Math.cos(seamAngle) * seamDist;
+                    const sy = Math.sin(seamAngle) * seamDist;
+
+                    ctx.beginPath();
+                    ctx.moveTo(ix, iy);
+                    ctx.lineTo(sx, sy);
+                    
+                    ctx.stroke();
+                }
+
+                // 繪製陰影 (覆蓋在紋理上)
+                ctx.fillStyle = grad;
+                ctx.fill();
+
+                ctx.restore(); // 結束剪裁 (Restore clipping)
+
+                // 4. 外輪廓 (畫在剪裁區外，確保線條清晰)
+                ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(0, 0, ball.radius, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        }
+
+        // 輔助函數：畫五邊形 (帶有微小圓角更真實)
+        function drawPentagon(ctx, x, y, size, fill) {
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                const angle = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+                const px = x + Math.cos(angle) * size;
+                const py = y + Math.sin(angle) * size;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            if(fill) {
+                ctx.fill();
+                // 畫五邊形的邊框縫線
+                ctx.stroke(); 
+            }
+        }
+
+        // 啟動
+        window.addEventListener('load', init);
+
+    </script>
+</body>
+</html>
