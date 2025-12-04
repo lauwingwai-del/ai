@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 空氣投籃</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- TensorFlow.js Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            position: absolute;
+            transform: scaleX(-1); /* 鏡像翻轉，讓操作更直觀 */
+            border-radius: 12px;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            max-width: 100%;
+            max-height: 100%;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        /* 讓按鈕可以點擊 */
+        #ui-layer button {
+            pointer-events: auto;
+        }
+
+        .score-board {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px 30px;
+            border-radius: 15px;
+            text-align: right;
+            border: 2px solid #ff9800;
+        }
+        .score-text {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #ff9800;
+            line-height: 1;
+        }
+        .label {
+            font-size: 0.9rem;
+            color: #ccc;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        /* 控制按鈕樣式 */
+        .control-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .control-btn.active {
+            background: rgba(255, 99, 71, 0.8); /* 紅色背景表示停止/暫停 */
+            border-color: rgba(255, 99, 71, 1);
+        }
+
+        #loading {
+            position: absolute;
+            z-index: 20;
+            background: rgba(0,0,0,0.9);
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.5s;
+        }
+        .loader {
+            border: 5px solid #333;
+            border-top: 5px solid #ff9800;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        #instruction {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.6);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 1.2rem;
+            text-align: center;
+            width: 80%;
+        }
+
+        /* 投籃提示區 */
+        .feedback-msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 4rem;
+            font-weight: bold;
+            color: #ffeb3b;
+            text-shadow: 0 0 10px rgba(0,0,0,0.5);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .feedback-msg.show {
+            opacity: 1;
+            animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        @keyframes pop {
+            0% { transform: translate(-50%, -50%) scale(0.5); }
+            50% { transform: translate(-50%, -50%) scale(1.2); }
+            100% { transform: translate(-50%, -50%) scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">
+        <div class="loader"></div>
+        <h2 class="text-xl font-bold text-orange-400">正在啟動 AI 引擎...</h2>
+        <p class="text-sm text-gray-400 mt-2">請允許攝像頭權限以進行遊戲</p>
+    </div>
+
+    <div id="game-container">
+        <!-- 視頻輸入 (隱藏) -->
+        <video id="video" playsinline style="display: none;"></video>
+        <!-- 遊戲畫布 -->
+        <canvas id="output"></canvas>
+        
+        <div id="ui-layer">
+            <button id="move-toggle" class="control-btn">
+                <span>⏸️ 鎖定籃框位置</span>
+            </button>
+
+            <div class="score-board">
+                <div class="label">SCORE</div>
+                <div class="score-text" id="score">0</div>
+            </div>
+            
+            <div id="feedback" class="feedback-msg">GOAL!</div>
+            
+            <div id="instruction">
+                🏀 站在鏡頭前，舉起右手做出<span class="text-orange-400 font-bold">快速投籃</span>動作！
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * 遊戲配置與全局變量
+         */
+        let detector;
+        let video;
+        let canvas, ctx;
+        let score = 0;
+        let isModelLoaded = false;
+        let animationId;
+
+        // 遊戲狀態
+        const STATE = {
+            IDLE: 'idle',      // 等待動作
+            HOLDING: 'holding', // 手舉起來了，準備投籃
+            SHOOTING: 'shooting' // 球飛出去中
+        };
+        let currentGameState = STATE.IDLE;
+
+        // 球的物理屬性
+        let ball = {
+            x: 0,
+            y: 0,
+            radius: 30,
+            vx: 0,
+            vy: 0,
+            active: false, // 球是否在空中
+            rotation: 0
+        };
+
+        // 籃框屬性
+        let hoop = {
+            x: 0,
+            y: 0,
+            width: 140, // 稍微加寬一點
+            height: 10,
+            direction: 1,
+            speed: 2,
+            isMoving: true // 控制變量
+        };
+
+        // 動作檢測變量
+        let rightWristYHistory = [];
+        let canShoot = true; // 冷卻時間控制
+
+        // 畫布尺寸
+        const VIDEO_WIDTH = 640;
+        const VIDEO_HEIGHT = 480;
+
+        /**
+         * 1. 初始化與相機設置
+         */
+        async function init() {
+            video = document.getElementById('video');
+            canvas = document.getElementById('output');
+            ctx = canvas.getContext('2d');
+
+            canvas.width = VIDEO_WIDTH;
+            canvas.height = VIDEO_HEIGHT;
+
+            // 設置籃框初始位置 (頂部中間)
+            hoop.x = VIDEO_WIDTH / 2 - hoop.width / 2;
+            hoop.y = 120; // 稍微放低一點讓玻璃板有空間
+
+            // 綁定按鈕事件
+            document.getElementById('move-toggle').addEventListener('click', toggleHoopMovement);
+
+            try {
+                await setupCamera();
+                await loadModel();
+                
+                // 隱藏加載畫面
+                document.getElementById('loading').style.opacity = '0';
+                setTimeout(() => {
+                    document.getElementById('loading').style.display = 'none';
+                }, 500);
+
+                startGameLoop();
+            } catch (error) {
+                console.error("初始化失敗:", error);
+                alert("無法啟動相機或 AI 模型，請檢查權限或瀏覽器支援。");
+            }
+        }
+
+        function toggleHoopMovement() {
+            hoop.isMoving = !hoop.isMoving;
+            const btn = document.getElementById('move-toggle');
+            if (hoop.isMoving) {
+                btn.innerHTML = '<span>⏸️ 鎖定籃框位置</span>';
+                btn.classList.remove('active');
+            } else {
+                btn.innerHTML = '<span>▶️ 開啟籃框移動</span>';
+                btn.classList.add('active');
+            }
+        }
+
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: VIDEO_WIDTH, height: VIDEO_HEIGHT },
+                audio: false
+            });
+            video.srcObject = stream;
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    video.play();
+                    resolve();
+                };
+            });
+        }
+
+        async function loadModel() {
+            const model = poseDetection.SupportedModels.MoveNet;
+            const detectorConfig = {
+                modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING // 使用輕量版以保證速度
+            };
+            detector = await poseDetection.createDetector(model, detectorConfig);
+            isModelLoaded = true;
+        }
+
+        /**
+         * 2. 核心遊戲循環
+         */
+        async function startGameLoop() {
+            async function render() {
+                if (!isModelLoaded) return;
+
+                // A. 獲取姿勢數據
+                const poses = await detector.estimatePoses(video);
+
+                // B. 繪製視頻背景
+                ctx.save();
+                ctx.scale(-1, 1); // 鏡像繪製視頻
+                ctx.translate(-canvas.width, 0);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                ctx.restore();
+
+                // C. 遊戲邏輯與繪製
+                // 注意：因為視頻被鏡像繪製了，但 AI 的座標還是基於原始視頻的
+                // 我們需要在邏輯中處理這個差異，或者在繪製遊戲元素時也進行鏡像，
+                // 這裡為了簡單，我們統一使用「畫布座標系」（左上角0,0）。
+                // 當我們獲取 AI 座標 (x) 時，因為我們視覺上鏡像了，所以視覺上的 x = width - ai_x
+
+                // 處理動作邏輯
+                if (poses && poses.length > 0) {
+                    processPose(poses[0]);
+                }
+
+                // 更新與繪製遊戲元素
+                updatePhysics();
+                drawGameElements();
+
+                animationId = requestAnimationFrame(render);
+            }
+            render();
+        }
+
+        /**
+         * 3. 動作識別與投籃邏輯
+         */
+        function processPose(pose) {
+            // 獲取關鍵點：右手腕 (keypoint index 10)
+            // MoveNet Keypoints: 0:nose, 10:right_wrist, 8:right_elbow
+            const rightWrist = pose.keypoints.find(k => k.name === 'right_wrist');
+            
+            // 確保置信度足夠高
+            if (rightWrist && rightWrist.score > 0.3) {
+                // 轉換座標到鏡像後的畫布座標
+                const visualX = canvas.width - rightWrist.x;
+                const visualY = rightWrist.y;
+
+                // 繪製手部追蹤點 (視覺反饋)
+                ctx.beginPath();
+                ctx.arc(visualX, visualY, 10, 0, 2 * Math.PI);
+                ctx.fillStyle = canShoot ? 'rgba(0, 255, 0, 0.6)' : 'rgba(255, 0, 0, 0.6)';
+                ctx.fill();
+
+                // 如果球不在空中，球跟隨手移動
+                if (!ball.active && canShoot) {
+                    ball.x = visualX;
+                    ball.y = visualY - 20; // 球稍微在手上方
+                }
+
+                // --- 投籃觸發算法 ---
+                // 記錄歷史 Y 座標以計算速度
+                rightWristYHistory.push({ y: visualY, time: Date.now() });
+                if (rightWristYHistory.length > 5) rightWristYHistory.shift();
+
+                // 條件 1: 手必須在身體上半部 (避免誤觸)
+                const isHighEnough = visualY < VIDEO_HEIGHT * 0.7;
+
+                if (isHighEnough && canShoot && !ball.active && rightWristYHistory.length >= 2) {
+                    const first = rightWristYHistory[0];
+                    const last = rightWristYHistory[rightWristYHistory.length - 1];
+                    
+                    const distY = first.y - last.y; // 正值代表向上移動 (Canvas Y 軸向下為正)
+                    const timeDiff = last.time - first.time;
+                    const speed = distY / timeDiff;
+
+                    // 閾值判定：速度夠快且向上
+                    if (speed > 0.4 && distY > 40) {
+                        shootBall(visualX, visualY, speed);
+                    }
+                }
+            }
+        }
+
+        function shootBall(startX, startY, speed) {
+            ball.active = true;
+            canShoot = false; // 鎖定直到球落地
+            
+            ball.x = startX;
+            ball.y = startY;
+            
+            // 向上力度 (根據手速調整，但設上限)
+            const power = Math.min(speed * 35, 25); 
+            ball.vy = -power; 
+
+            // 水平力度：根據手的位置，稍微修正往中心打
+            const screenCenter = canvas.width / 2;
+            const deviation = (screenCenter - startX) * 0.02;
+            ball.vx = deviation; 
+        }
+
+        /**
+         * 4. 物理與遊戲更新
+         */
+        function updatePhysics() {
+            // 更新籃框移動 (僅在 isMoving 為 true 時)
+            if (hoop.isMoving) {
+                hoop.x += hoop.speed * hoop.direction;
+                if (hoop.x <= 50 || hoop.x + hoop.width >= canvas.width - 50) {
+                    hoop.direction *= -1;
+                }
+            }
+
+            // 如果球在空中
+            if (ball.active) {
+                ball.x += ball.vx;
+                ball.y += ball.vy;
+                ball.vy += 0.8; // 重力
+                ball.rotation += 0.1;
+
+                // 邊界檢查 (重置)
+                if (ball.y > canvas.height + 50 || ball.x < -50 || ball.x > canvas.width + 50) {
+                    resetBall();
+                }
+
+                // 碰撞檢測 (籃框)
+                checkScore();
+            }
+        }
+
+        function checkScore() {
+            const hoopCX = hoop.x + hoop.width / 2;
+            const hoopCY = hoop.y + 10; // 籃網高度
+
+            // 距離檢測
+            const distX = Math.abs(ball.x - hoopCX);
+            const distY = Math.abs(ball.y - hoopCY);
+
+            if (ball.vy > 0 && distX < hoop.width / 2.5 && distY < 20) {
+                // 進球！
+                score++;
+                document.getElementById('score').innerText = score;
+                showFeedback("GOAL!");
+                resetBall();
+                
+                // 增加難度
+                if (hoop.isMoving) hoop.speed += 0.2;
+            }
+        }
+
+        function resetBall() {
+            ball.active = false;
+            ball.vx = 0;
+            ball.vy = 0;
+            // 短暫延遲後允許再次投籃
+            setTimeout(() => {
+                canShoot = true;
+            }, 500);
+        }
+
+        function showFeedback(text) {
+            const el = document.getElementById('feedback');
+            el.innerText = text;
+            el.classList.add('show');
+            setTimeout(() => {
+                el.classList.remove('show');
+            }, 1000);
+        }
+
+        /**
+         * 5. 繪製元素
+         */
+        function drawGameElements() {
+            
+            // --- 繪製籃框 (透明玻璃板 + 紅色籃圈 + 白色尼龍網) ---
+            
+            // 1. 透明玻璃籃板 (Glass Backboard)
+            const boardW = hoop.width + 40;
+            const boardH = 90;
+            const boardX = hoop.x + hoop.width/2 - boardW/2;
+            const boardY = hoop.y - boardH + 10;
+
+            ctx.save();
+            
+            // 玻璃主體
+            ctx.fillStyle = 'rgba(200, 230, 255, 0.25)'; // 淡藍色透明
+            ctx.fillRect(boardX, boardY, boardW, boardH);
+            
+            // 玻璃邊框 (灰白色)
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = '#dbeeff';
+            ctx.strokeRect(boardX, boardY, boardW, boardH);
+
+            // 籃板中間的小方框 (Inner Square - Target)
+            const innerW = boardW * 0.4;
+            const innerH = boardH * 0.45;
+            const innerX = boardX + (boardW - innerW) / 2;
+            const innerY = boardY + (boardH - innerH) - 15;
+            
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.strokeRect(innerX, innerY, innerW, innerH);
+            
+            ctx.restore();
+
+            // 2. 籃網 (White Nylon Net) - 後半部分 (被籃圈遮擋的部分)
+            // 先畫後半部分可以製造立體感，但這裡簡化為統一繪製
+            
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(240, 240, 240, 0.9)'; // 白色尼龍
+            ctx.lineWidth = 1.5;
+
+            // 網子的頂部寬度和底部寬度
+            let topW = hoop.width;
+            let botW = hoop.width * 0.4;
+            let netH = 60;
+            
+            // 繪製網格交叉線
+            // 左上到右下
+            for(let i=0; i<=6; i++) {
+                let r = i / 6;
+                let startX = hoop.x + (r * topW);
+                let endX = (hoop.x + (topW-botW)/2) + (r * botW) + 5; // 稍微偏移
+                ctx.moveTo(startX, hoop.y);
+                ctx.lineTo(endX, hoop.y + netH);
+            }
+            // 右上到左下
+            for(let i=0; i<=6; i++) {
+                let r = i / 6;
+                let startX = hoop.x + (r * topW);
+                let endX = (hoop.x + (topW-botW)/2) + (r * botW) - 5;
+                ctx.moveTo(startX, hoop.y);
+                ctx.lineTo(endX, hoop.y + netH);
+            }
+            ctx.stroke();
+
+
+            // 3. 籃圈 (Red Rim)
+            ctx.beginPath();
+            ctx.moveTo(hoop.x, hoop.y);
+            ctx.lineTo(hoop.x + hoop.width, hoop.y);
+            // 畫得稍微粗一點，並帶有圓角
+            ctx.lineCap = 'round'; 
+            ctx.strokeStyle = '#d62828'; // 紅色
+            ctx.lineWidth = 8;
+            ctx.stroke();
+            
+            // 籃圈連接桿 (Connecting part to backboard)
+            ctx.fillStyle = '#d62828';
+            ctx.fillRect(boardX + boardW/2 - 5, hoop.y, 10, -10);
+
+
+            // 4. 繪製籃球 (保持不變)
+            if (ball.active || canShoot) {
+                ctx.save();
+                ctx.translate(ball.x, ball.y);
+                ctx.rotate(ball.rotation);
+                
+                // Ball Body
+                ctx.beginPath();
+                ctx.arc(0, 0, ball.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#ff6b00'; // Orange
+                ctx.fill();
+                ctx.strokeStyle = '#222';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Ball Lines
+                ctx.beginPath();
+                ctx.moveTo(0, -ball.radius);
+                ctx.lineTo(0, ball.radius);
+                ctx.moveTo(-ball.radius, 0);
+                ctx.lineTo(ball.radius, 0);
+                // Curves
+                ctx.moveTo(-ball.radius * 0.7, -ball.radius * 0.7);
+                ctx.quadraticCurveTo(ball.radius * 0.5, 0, -ball.radius * 0.7, ball.radius * 0.7);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        }
+
+        // 啟動
+        window.addEventListener('load', init);
+
+    </script>
+</body>
+</html>
