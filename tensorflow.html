@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 脈衝吹氣星空</title>
+    
+    <!-- 引入穩定的 TensorFlow.js 版本 -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@0.0.3"></script>
+
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #050510;
+            overflow: hidden;
+            font-family: 'Segoe UI', "Microsoft JhengHei", sans-serif;
+        }
+
+        #canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        /* 頂部教學欄 */
+        #instruction-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px 0 40px 0;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0) 100%);
+            z-index: 20;
+            pointer-events: none; /* 讓點擊可以穿透 */
+            text-align: center;
+            color: #fff;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+
+        #instruction-bar h2 {
+            margin: 0 0 10px 0;
+            font-size: 1.8rem;
+            background: linear-gradient(90deg, #ff0055, #ffcc00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: inline-block;
+        }
+
+        .steps {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            font-size: 1.1rem;
+            color: #ddd;
+        }
+
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .step-icon {
+            background: rgba(255,255,255,0.2);
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 0.9rem;
+            font-weight: bold;
+        }
+
+        /* 鏡頭預覽容器 */
+        #camera-container {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 200px;
+            height: 150px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            background: #000;
+            z-index: 5;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+        }
+
+        #debugCanvas {
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1); /* 鏡像翻轉 */
+        }
+
+        /* 載入與控制層 */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 30;
+            color: white;
+            transition: opacity 0.5s;
+        }
+
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #ff0055;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .hidden { opacity: 0; pointer-events: none; }
+
+        h1 {
+            background: linear-gradient(90deg, #ff0055, #ffcc00);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        
+        button {
+            padding: 12px 30px;
+            font-size: 1.1rem;
+            background: #ff0055;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(255, 0, 85, 0.6);
+            transition: 0.2s;
+        }
+        button:hover { transform: scale(1.05); background: #d60047; }
+
+        /* 狀態文字 HUD */
+        #hud {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 4;
+            pointer-events: none;
+            text-align: center;
+            width: 100%;
+        }
+
+        #action-text {
+            font-size: 5rem;
+            font-weight: bold;
+            color: rgba(255, 255, 255, 0.1);
+            text-transform: uppercase;
+            transition: all 0.1s;
+            text-shadow: 0 0 20px rgba(0,0,0,0.5);
+            letter-spacing: 5px;
+        }
+
+        .charging {
+            color: #ffcc00 !important;
+            text-shadow: 0 0 30px #ffcc00;
+            transform: scale(1.1);
+        }
+
+        .blowing {
+            color: #00f2ff !important;
+            text-shadow: 0 0 50px #00f2ff;
+            transform: scale(1.5);
+            opacity: 0; /* 閃一下就消失 */
+            transition: opacity 0.5s ease-out;
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- 頂部教學欄 -->
+    <div id="instruction-bar">
+        <h2>星空吹氣互動</h2>
+        <div class="steps">
+            <div class="step-item">
+                <div class="step-icon">1</div>
+                <span>對準鏡頭</span>
+            </div>
+            <div class="step-item">
+                <div class="step-icon">2</div>
+                <span>張開嘴巴蓄氣</span>
+            </div>
+            <div class="step-item">
+                <div class="step-icon">3</div>
+                <span>快速閉嘴吹出！</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 初始載入層 -->
+    <div id="overlay">
+        <h1>AI 脈衝吹氣星空</h1>
+        <p style="color:#aaa; margin-bottom: 20px;">請確保環境光線充足，臉部對準鏡頭</p>
+        <div class="loader" id="loader"></div>
+        <p id="loading-text" style="display:none; color:#aaa; font-size:0.9rem;">正在下載 AI 模型 (請稍候)...</p>
+        <button id="startBtn">開始體驗</button>
+    </div>
+
+    <!-- 中央提示文字 -->
+    <div id="hud">
+        <div id="action-text">READY</div>
+    </div>
+
+    <!-- 右下角鏡頭 -->
+    <div id="camera-container">
+        <canvas id="debugCanvas"></canvas>
+    </div>
+
+    <video id="video" playsinline style="display:none;"></video>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // --- 參數設定 ---
+        const STAR_COUNT = 1500;
+        const MOUTH_OPEN_THRESHOLD = 0.05; // 嘴巴開合判定閾值
+        const RETURN_SPEED = 0.02;         // 星星回彈速度
+        const BLOW_FORCE = 35;             // 瞬間爆發力
+        const FRICTION = 0.94;             // 摩擦力
+        
+        // --- 全域變數 ---
+        let width, height;
+        let canvas, ctx;
+        let stars = [];
+        
+        // AI 相關
+        let model;
+        let video;
+        let debugCanvas, debugCtx;
+        let isModelLoaded = false;
+        let isVideoReady = false;
+        
+        // 狀態機變數
+        let isMouthOpen = false;       // 目前嘴巴狀態
+        let wasMouthOpen = false;      // 上一幀嘴巴狀態
+        let impulse = 0;               // 瞬間衝擊力
+        let faceCenter = { x: window.innerWidth/2, y: window.innerHeight/2 };
+
+        // --- 初始化流程 ---
+        const startBtn = document.getElementById('startBtn');
+        const loader = document.getElementById('loader');
+        const loadingText = document.getElementById('loading-text');
+
+        startBtn.addEventListener('click', async () => {
+            startBtn.style.display = 'none';
+            loader.style.display = 'block';
+            loadingText.style.display = 'block';
+
+            try {
+                await setupCamera();
+                await loadFaceModel();
+                
+                document.getElementById('overlay').classList.add('hidden');
+                
+                initCanvas();
+                detectLoop();
+                animate();
+            } catch (err) {
+                console.error(err);
+                alert("初始化失敗，請檢查攝影機權限: " + err.message);
+                startBtn.style.display = 'block';
+                loader.style.display = 'none';
+            }
+        });
+
+        async function setupCamera() {
+            video = document.getElementById('video');
+            const stream = await navigator.mediaDevices.getUserMedia({
+                'audio': false,
+                'video': { facingMode: 'user', width: 640, height: 480 }
+            });
+            video.srcObject = stream;
+
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    video.play();
+                    isVideoReady = true;
+                    debugCanvas = document.getElementById('debugCanvas');
+                    debugCtx = debugCanvas.getContext('2d');
+                    debugCanvas.width = video.videoWidth;
+                    debugCanvas.height = video.videoHeight;
+                    resolve(video);
+                };
+            });
+        }
+
+        async function loadFaceModel() {
+            model = await faceLandmarksDetection.load(
+                faceLandmarksDetection.SupportedPackages.mediapipeFacemesh,
+                { maxFaces: 1 }
+            );
+            isModelLoaded = true;
+        }
+
+        function initCanvas() {
+            canvas = document.getElementById('canvas');
+            ctx = canvas.getContext('2d');
+            resize();
+            window.addEventListener('resize', resize);
+            createStars();
+        }
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+        }
+
+        class Star {
+            constructor() {
+                this.baseX = Math.random() * width;
+                this.baseY = Math.random() * height;
+                this.x = this.baseX;
+                this.y = this.baseY;
+                this.vx = 0;
+                this.vy = 0;
+                this.size = Math.random() * 2 + 0.5;
+                this.mass = Math.random() * 0.8 + 0.2; 
+                this.color = `rgba(200, 240, 255, ${Math.random()*0.5 + 0.3})`;
+            }
+
+            update() {
+                // 1. 脈衝衝擊力邏輯
+                if (impulse > 0.01) {
+                    let dx = this.x - faceCenter.x;
+                    let dy = this.y - faceCenter.y;
+                    let dist = Math.sqrt(dx*dx + dy*dy);
+                    
+                    let maxDist = 200 + (impulse * 800); 
+
+                    if (dist < maxDist) {
+                        let force = (maxDist - dist) / maxDist;
+                        let angle = Math.atan2(dy, dx);
+                        
+                        let push = force * impulse * BLOW_FORCE * (1/this.mass);
+                        
+                        this.vx += Math.cos(angle) * push;
+                        this.vy += Math.sin(angle) * push;
+                    }
+                }
+
+                // 2. 回家彈力
+                if (impulse < 0.5) { 
+                    let springX = (this.baseX - this.x) * RETURN_SPEED;
+                    let springY = (this.baseY - this.y) * RETURN_SPEED;
+                    this.vx += springX;
+                    this.vy += springY;
+                }
+
+                // 3. 摩擦力與更新
+                this.vx *= FRICTION;
+                this.vy *= FRICTION;
+                this.x += this.vx;
+                this.y += this.vy;
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function createStars() {
+            stars = [];
+            for(let i=0; i<STAR_COUNT; i++) stars.push(new Star());
+        }
+
+        // --- 核心邏輯 ---
+        async function detectLoop() {
+            if (!isModelLoaded || !isVideoReady) return;
+
+            const predictions = await model.estimateFaces({ input: video });
+
+            debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
+            debugCtx.drawImage(video, 0, 0, debugCanvas.width, debugCanvas.height);
+
+            if (predictions.length > 0) {
+                const keypoints = predictions[0].scaledMesh;
+                
+                // 計算嘴巴開合比率
+                const upperLip = keypoints[13];
+                const lowerLip = keypoints[14];
+                const faceTop = keypoints[10];
+                const chin = keypoints[152];
+                
+                const lipDist = Math.abs(lowerLip[1] - upperLip[1]);
+                const faceHeight = Math.abs(chin[1] - faceTop[1]);
+                const ratio = lipDist / faceHeight;
+
+                // 更新當前臉部位置
+                const nose = keypoints[1];
+                let normalizedX = 1 - (nose[0] / video.videoWidth); 
+                let normalizedY = nose[1] / video.videoHeight;
+                faceCenter.x += (normalizedX * width - faceCenter.x) * 0.1;
+                faceCenter.y += (normalizedY * height - faceCenter.y) * 0.1;
+
+                // --- 狀態機邏輯 ---
+                wasMouthOpen = isMouthOpen; 
+                
+                // 判斷當前是否張開
+                if (ratio > MOUTH_OPEN_THRESHOLD) {
+                    isMouthOpen = true;
+                } else {
+                    isMouthOpen = false;
+                }
+
+                // 觸發：從開到關 (Falling Edge)
+                if (wasMouthOpen && !isMouthOpen) {
+                    triggerBlow();
+                }
+
+                // --- UI 回饋 ---
+                updateHUD(ratio);
+                drawDebug(keypoints);
+            }
+
+            requestAnimationFrame(detectLoop);
+        }
+
+        function triggerBlow() {
+            impulse = 1.0; 
+            
+            const hud = document.getElementById('action-text');
+            hud.innerText = "BLOW!";
+            hud.className = "blowing";
+            
+            setTimeout(() => {
+                hud.style.opacity = '0';
+            }, 100);
+        }
+
+        function updateHUD(ratio) {
+            const hud = document.getElementById('action-text');
+            
+            if (ratio > MOUTH_OPEN_THRESHOLD) {
+                hud.innerText = "蓄氣中...";
+                hud.className = "charging";
+                hud.style.opacity = '1';
+            } 
+            else if (impulse < 0.1) {
+                // 如果沒有在吹，文字就清空或顯示 Ready
+                if (hud.className === "blowing") return; // 如果正在閃爍 blowing 就不打斷
+                
+                hud.innerText = "";
+                hud.className = "";
+            }
+        }
+
+        function drawDebug(keypoints) {
+            // 畫出嘴巴狀態顏色
+            debugCtx.fillStyle = isMouthOpen ? '#ffcc00' : '#aaa'; 
+            
+            const mouthIndices = [13, 14, 78, 308]; 
+            mouthIndices.forEach(idx => {
+                const [x, y] = keypoints[idx];
+                debugCtx.beginPath();
+                debugCtx.arc(x, y, 3, 0, 2 * Math.PI);
+                debugCtx.fill();
+            });
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, width, height);
+
+            impulse *= 0.92; 
+            if (impulse < 0.01) impulse = 0;
+
+            // 衝擊波視覺
+            if (impulse > 0.05) {
+                ctx.beginPath();
+                ctx.arc(faceCenter.x, faceCenter.y, 100 + (1-impulse)*500, 0, Math.PI*2);
+                ctx.strokeStyle = `rgba(255, 255, 255, ${impulse * 0.5})`;
+                ctx.lineWidth = 5 + impulse * 20;
+                ctx.stroke();
+            }
+
+            stars.forEach(star => {
+                star.update();
+                star.draw();
+            });
+
+            requestAnimationFrame(animate);
+        }
+    </script>
+</body>
+</html>
