@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>快樂學習 & AI 探索樂園</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Noto Sans TC for text, Zen Maru Gothic for rounded headings -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Zen+Maru+Gothic:wght@500;700;900&display=swap" rel="stylesheet">
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: #f0fdf4; /* Very light green background */
+            background-image: radial-gradient(#dcfce7 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        h1, h2, h3 {
+            font-family: 'Zen Maru Gothic', sans-serif;
+        }
+        .card-hover:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="text-slate-700">
+
+    <!-- Navbar / Header -->
+    <header class="bg-white/80 backdrop-blur-md sticky top-0 z-50 border-b border-slate-200 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="bg-indigo-600 text-white w-10 h-10 rounded-full flex items-center justify-center shadow-md">
+                    <i class="fa-solid fa-rocket text-xl"></i>
+                </div>
+                <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600">
+                    探索樂園
+                </h1>
+            </div>
+            <div class="text-sm font-medium text-slate-500 hidden sm:block">
+                數學 × AI 創意
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-16">
+
+        <!-- Section 1: 數學教學 -->
+        <section>
+            <div class="flex items-center space-x-3 mb-8">
+                <div class="p-2 bg-emerald-100 rounded-lg text-emerald-600">
+                    <i class="fa-solid fa-calculator text-2xl"></i>
+                </div>
+                <h2 class="text-3xl font-bold text-slate-800">數學教學區</h2>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                
+                <!-- Card 1 -->
+                <a href="https://lauwingwai-dei.github.io/math/1.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-shop text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-6 flex-1 flex flex-col">
+                        <h3 class="text-xl font-bold text-slate-800 mb-2 group-hover:text-emerald-600 transition-colors">數學禮物店</h3>
+                        <p class="text-slate-500 text-sm mb-4 flex-1">
+                            在有趣的商店環境中練習數學計算，挑選禮物並結帳。
+                        </p>
+                        <span class="inline-flex items-center justify-center w-full px-4 py-2 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-sm group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                            開始練習 <i class="fa-solid fa-arrow-right ml-2"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <!-- Card 2 -->
+                <a href="https://lauwingwai-del.github.io/math/COIN3.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-coins text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-6 flex-1 flex flex-col">
+                        <h3 class="text-xl font-bold text-slate-800 mb-2 group-hover:text-green-600 transition-colors">認幣＋基礎加減</h3>
+                        <p class="text-slate-500 text-sm mb-4 flex-1">
+                            認識硬幣的面額，並進行基礎的加減法運算挑戰。
+                        </p>
+                        <span class="inline-flex items-center justify-center w-full px-4 py-2 bg-green-50 text-green-700 rounded-lg font-bold text-sm group-hover:bg-green-600 group-hover:text-white transition-colors">
+                            開始練習 <i class="fa-solid fa-arrow-right ml-2"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <!-- Card 3 -->
+                <a href="https://lauwingwai-del.github.io/math/counting_cash2.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-teal-400 to-cyan-500 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-money-bill-wave text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-6 flex-1 flex flex-col">
+                        <h3 class="text-xl font-bold text-slate-800 mb-2 group-hover:text-teal-600 transition-colors">香港貨幣計算練習</h3>
+                        <p class="text-slate-500 text-sm mb-4 flex-1">
+                            專門針對香港貨幣設計的計算練習，貼近生活應用。
+                        </p>
+                        <span class="inline-flex items-center justify-center w-full px-4 py-2 bg-teal-50 text-teal-700 rounded-lg font-bold text-sm group-hover:bg-teal-600 group-hover:text-white transition-colors">
+                            開始練習 <i class="fa-solid fa-arrow-right ml-2"></i>
+                        </span>
+                    </div>
+                </a>
+
+            </div>
+        </section>
+
+        <!-- Section 2: AI 交互遊戲 -->
+        <section>
+            <div class="flex items-center space-x-3 mb-8">
+                <div class="p-2 bg-violet-100 rounded-lg text-violet-600">
+                    <i class="fa-solid fa-wand-magic-sparkles text-2xl"></i>
+                </div>
+                <h2 class="text-3xl font-bold text-slate-800">AI 交互遊戲區</h2>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                
+                <!-- Game 1 -->
+                <a href="https://lauwingwai-del.github.io/ai/DRUM2.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-purple-400 to-indigo-500 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-drum text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <h3 class="text-lg font-bold text-slate-800 mb-1 group-hover:text-purple-600 transition-colors">打鼓遊戲</h3>
+                        <p class="text-slate-400 text-xs mb-3 flex-1">跟隨節奏，體驗 AI 互動打擊樂趣。</p>
+                        <div class="flex justify-end">
+                            <i class="fa-solid fa-play text-purple-400 group-hover:text-purple-600 text-xl transition-colors"></i>
+                        </div>
+                    </div>
+                </a>
+
+                <!-- Game 2 -->
+                <a href="https://lauwingwai-del.github.io/ai/basketball.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-basketball text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <h3 class="text-lg font-bold text-slate-800 mb-1 group-hover:text-orange-600 transition-colors">籃球遊戲</h3>
+                        <p class="text-slate-400 text-xs mb-3 flex-1">AI 視覺識別，投籃互動體驗。</p>
+                        <div class="flex justify-end">
+                            <i class="fa-solid fa-play text-orange-400 group-hover:text-orange-600 text-xl transition-colors"></i>
+                        </div>
+                    </div>
+                </a>
+
+                <!-- Game 3 -->
+                <a href="https://lauwingwai-del.github.io/ai/garden4.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-moon text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <h3 class="text-lg font-bold text-slate-800 mb-1 group-hover:text-blue-600 transition-colors">月雖殘 亮如雪</h3>
+                        <p class="text-slate-400 text-xs mb-3 flex-1">充滿詩意的 AI 視覺藝術互動。</p>
+                        <div class="flex justify-end">
+                            <i class="fa-solid fa-play text-blue-400 group-hover:text-blue-600 text-xl transition-colors"></i>
+                        </div>
+                    </div>
+                </a>
+
+                <!-- Game 4 -->
+                <a href="https://lauwingwai-del.github.io/ai/grapitem.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-pink-400 to-rose-500 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-shapes text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <h3 class="text-lg font-bold text-slate-800 mb-1 group-hover:text-pink-600 transition-colors">形狀分類</h3>
+                        <p class="text-slate-400 text-xs mb-3 flex-1">訓練 AI 識別不同的幾何形狀。</p>
+                        <div class="flex justify-end">
+                            <i class="fa-solid fa-play text-pink-400 group-hover:text-pink-600 text-xl transition-colors"></i>
+                        </div>
+                    </div>
+                </a>
+
+                <!-- Game 5 -->
+                <a href="https://lauwingwai-del.github.io/ai/pottery.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-amber-600 to-orange-700 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-hands-holding-circle text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <h3 class="text-lg font-bold text-slate-800 mb-1 group-hover:text-amber-700 transition-colors">陶藝大師</h3>
+                        <p class="text-slate-400 text-xs mb-3 flex-1">虛擬捏陶，創作獨一無二的陶藝作品。</p>
+                        <div class="flex justify-end">
+                            <i class="fa-solid fa-play text-amber-500 group-hover:text-amber-700 text-xl transition-colors"></i>
+                        </div>
+                    </div>
+                </a>
+
+                <!-- Game 6 -->
+                <a href="https://lauwingwai-del.github.io/ai/tensorflow.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-sky-400 to-blue-500 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-wind text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <h3 class="text-lg font-bold text-slate-800 mb-1 group-hover:text-sky-600 transition-colors">吹氣星空</h3>
+                        <p class="text-slate-400 text-xs mb-3 flex-1">利用聲音或吹氣互動，點亮星空。</p>
+                        <div class="flex justify-end">
+                            <i class="fa-solid fa-play text-sky-400 group-hover:text-sky-600 text-xl transition-colors"></i>
+                        </div>
+                    </div>
+                </a>
+
+                <!-- Game 7 -->
+                <a href="https://lauwingwai-del.github.io/ai/tree2.html" target="_blank" class="group bg-white rounded-2xl overflow-hidden shadow-md border border-slate-100 transition-all duration-300 card-hover flex flex-col">
+                    <div class="h-32 bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
+                        <i class="fa-solid fa-tree text-5xl text-white opacity-90 drop-shadow-md"></i>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <h3 class="text-lg font-bold text-slate-800 mb-1 group-hover:text-green-700 transition-colors">聖誕樹</h3>
+                        <p class="text-slate-400 text-xs mb-3 flex-1">裝飾與互動的 AI 聖誕樹體驗。</p>
+                        <div class="flex justify-end">
+                            <i class="fa-solid fa-play text-green-500 group-hover:text-green-700 text-xl transition-colors"></i>
+                        </div>
+                    </div>
+                </a>
+
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="bg-white border-t border-slate-200 mt-12 py-8">
+        <div class="max-w-7xl mx-auto px-4 text-center">
+            <p class="text-slate-500 font-medium">© 2024 快樂學習 & AI 探索樂園</p>
+            <p class="text-slate-400 text-sm mt-2">啟發智慧 • 探索未來</p>
+        </div>
+    </footer>
+
+</body>
+</html>
