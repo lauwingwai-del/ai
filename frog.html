@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>互動青蛙 - 拍拍手、揮揮手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a202c;
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        #video-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        video {
+            transform: scaleX(-1);
+            object-fit: cover;
+            width: 100%;
+            height: 100%;
+        }
+        canvas#motion-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            opacity: 0.3;
+        }
+        #frog {
+            position: absolute;
+            /* 放大青蛙尺寸 */
+            width: 200px;
+            height: 200px;
+            transition: all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 10;
+            pointer-events: none;
+        }
+        .ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 15px;
+            border-radius: 12px;
+            backdrop-filter: blur(5px);
+            z-index: 20;
+        }
+        .sensitivity-bar {
+            width: 100%;
+            height: 8px;
+            background: #444;
+            border-radius: 4px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        #energy-fill {
+            height: 100%;
+            width: 0%;
+            background: #4ade80;
+            transition: width 0.1s;
+        }
+    </style>
+</head>
+<body>
+
+<div id="video-container">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="motion-canvas"></canvas>
+    
+    <!-- SVG 青蛙 -->
+    <div id="frog">
+        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="50" cy="60" r="35" fill="#4CAF50" /> <!-- 身體 -->
+            <circle cx="30" cy="30" r="12" fill="#4CAF50" /> <!-- 左眼座 -->
+            <circle cx="70" cy="30" r="12" fill="#4CAF50" /> <!-- 右眼座 -->
+            <circle cx="30" cy="30" r="7" fill="white" />   <!-- 左眼白 -->
+            <circle cx="70" cy="30" r="7" fill="white" />   <!-- 右眼白 -->
+            <circle cx="32" cy="28" r="3" fill="black" />   <!-- 左瞳孔 -->
+            <circle cx="68" cy="28" r="3" fill="black" />   <!-- 右瞳孔 -->
+            <path d="M 35 70 Q 50 85 65 70" stroke="black" stroke-width="2" fill="none" /> <!-- 嘴巴 -->
+        </svg>
+    </div>
+
+    <div class="ui-panel">
+        <h1 class="text-xl font-bold mb-1">互動青蛙小教室 🐸</h1>
+        <p class="text-sm opacity-80">揮手或拍拍手，讓青蛙跳動！</p>
+        <div class="mt-4">
+            <div class="flex justify-between text-xs">
+                <span>動能偵測</span>
+                <span id="motion-value">0%</span>
+            </div>
+            <div class="sensitivity-bar">
+                <div id="energy-fill"></div>
+            </div>
+        </div>
+        <button id="start-btn" class="mt-4 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-full w-full transition font-bold">
+            啟動攝影機
+        </button>
+    </div>
+</div>
+
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('motion-canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const frog = document.getElementById('frog');
+    const energyFill = document.getElementById('energy-fill');
+    const motionValueLabel = document.getElementById('motion-value');
+    const startBtn = document.getElementById('start-btn');
+
+    // 調整初始偏移量以對應新的尺寸 (200px / 2 = 100)
+    let frogX = window.innerWidth / 2 - 100;
+    let frogY = window.innerHeight / 2 - 100;
+    let isMoving = false;
+    let prevFrame = null;
+
+    // 初始化青蛙位置
+    updateFrogPosition();
+
+    function updateFrogPosition() {
+        frog.style.left = `${frogX}px`;
+        frog.style.top = `${frogY}px`;
+    }
+
+    async function setupCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: 640, height: 480 }, 
+                audio: false 
+            });
+            video.srcObject = stream;
+            startBtn.style.display = 'none';
+            
+            video.onloadedmetadata = () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                requestAnimationFrame(processFrame);
+            };
+        } catch (err) {
+            console.error("無法開啟攝影機: ", err);
+            alert("請允許開啟攝影機以進行互動。");
+        }
+    }
+
+    function processFrame() {
+        if (video.paused || video.ended) return;
+
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+        ctx.restore();
+
+        const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        
+        if (prevFrame) {
+            let totalDiff = 0;
+            for (let i = 0; i < currentFrame.data.length; i += 16) {
+                const rDiff = Math.abs(currentFrame.data[i] - prevFrame.data[i]);
+                const gDiff = Math.abs(currentFrame.data[i + 1] - prevFrame.data[i + 1]);
+                const bDiff = Math.abs(currentFrame.data[i + 2] - prevFrame.data[i + 2]);
+                
+                if (rDiff + gDiff + bDiff > 80) {
+                    totalDiff++;
+                }
+            }
+
+            const motionScore = (totalDiff / (currentFrame.data.length / 16)) * 100;
+            const displayScore = Math.min(motionScore * 5, 100);
+            
+            energyFill.style.width = `${displayScore}%`;
+            motionValueLabel.innerText = `${Math.floor(displayScore)}%`;
+
+            if (displayScore > 35 && !isMoving) {
+                jumpFrog();
+            }
+        }
+
+        prevFrame = currentFrame;
+        requestAnimationFrame(processFrame);
+    }
+
+    function jumpFrog() {
+        isMoving = true;
+        
+        const padding = 150; // 增加邊距防止太大隻超出畫面
+        const targetX = Math.random() * (window.innerWidth - 2 * padding) + (padding - 100);
+        const targetY = Math.random() * (window.innerHeight - 2 * padding) + (padding - 100);
+
+        const angle = Math.atan2(targetY - frogY, targetX - frogX) * 180 / Math.PI;
+        
+        // 跳躍時稍微放大一點點增加動感 (1.2x)
+        frog.style.transform = `rotate(${angle + 90}deg) scale(1.2)`;
+
+        setTimeout(() => {
+            frogX = targetX;
+            frogY = targetY;
+            updateFrogPosition();
+            
+            setTimeout(() => {
+                // 回到正常比例 (1x)
+                frog.style.transform = `rotate(${angle + 90}deg) scale(1)`;
+                isMoving = false;
+            }, 500);
+        }, 50);
+    }
+
+    startBtn.addEventListener('click', setupCamera);
+
+    window.addEventListener('resize', () => {
+        if (video.srcObject) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+        }
+    });
+
+</script>
+
+</body>
+</html>
