@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 視像接硬幣遊戲 - 穩定修復版</title>
+    <!-- 引入 MediaPipe 用於人體偵測 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            background-color: #1a1a1a;
+            font-family: sans-serif;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow-x: hidden;
+        }
+        #game-wrapper {
+            width: 100%;
+            max-width: 600px; 
+            aspect-ratio: 1080 / 1920;
+            position: relative;
+            background: #000;
+            overflow: hidden;
+            border: 4px solid #444;
+            margin-top: 10px;
+        }
+        video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 0.3;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+        .controls {
+            padding: 20px;
+            display: flex;
+            gap: 10px;
+            z-index: 20;
+            background: #222;
+            width: 100%;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .score-board {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            font-size: 56px;
+            font-weight: bold;
+            text-shadow: 3px 3px 6px rgba(0,0,0,0.8);
+            z-index: 30;
+            color: #ffcc00;
+        }
+        .loading-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            text-align: center;
+        }
+        .btn {
+            @apply px-4 py-2 rounded-full font-bold text-sm transition;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <div id="loading" class="loading-overlay">
+        <div>
+            <p class="text-2xl mb-4">正在準備遊戲...</p>
+            <p class="text-sm text-gray-400">請授權攝像頭以進行偵測</p>
+        </div>
+    </div>
+    <div class="score-board">得分: <span id="score">0</span></div>
+    <video id="input_video" playsinline></video>
+    <canvas id="output_canvas"></canvas>
+</div>
+
+<div class="controls">
+    <button onclick="resetGame()" class="btn bg-red-600 hover:bg-red-700">
+        重置遊戲
+    </button>
+    
+    <label class="btn bg-blue-600 hover:bg-blue-700 cursor-pointer">
+        上載 1 元硬幣圖片
+        <input type="file" id="coinInput" accept="image/*" class="hidden" onchange="handleCoinUpload(event)">
+    </label>
+
+    <label class="btn bg-pink-600 hover:bg-pink-700 cursor-pointer">
+        換豬仔圖片
+        <input type="file" id="piggyInput" accept="image/*" class="hidden" onchange="handlePiggyUpload(event)">
+    </label>
+    
+    <div class="w-full text-center mt-2 text-xs text-gray-500">
+        解析度: 1080x1920 | 已修復圖片載入錯誤
+    </div>
+</div>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const scoreElement = document.getElementById('score');
+    const loadingOverlay = document.getElementById('loading');
+
+    const GAME_WIDTH = 1080;
+    const GAME_HEIGHT = 1920;
+    const COIN_SIZE = 200; 
+    const PIGGY_SIZE = 350; 
+
+    let score = 0;
+    let coins = [];
+    let playerX = GAME_WIDTH / 2;
+    let playerY = GAME_HEIGHT * 0.85; 
+    
+    // --- 圖片預設值與錯誤處理 ---
+    let coinImage = new Image();
+    let coinReady = false;
+    
+    // 使用高容錯率的 SVG 作為預設，避免 Base64 損壞導致 Broken State
+    const defaultCoinSVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+            <circle cx="100" cy="100" r="95" fill="#e5e5e5" stroke="#999" stroke-width="5"/>
+            <text x="50%" y="60%" text-anchor="middle" fill="#666" font-family="Arial" font-size="60" font-weight="bold">1元</text>
+        </svg>
+    `);
+
+    coinImage.onload = () => { coinReady = true; };
+    coinImage.onerror = () => { 
+        console.warn("硬幣圖片載入失敗，切換回預設圖形");
+        coinImage.src = defaultCoinSVG;
+    };
+    coinImage.src = defaultCoinSVG;
+
+    let piggyImage = new Image();
+    let piggyReady = false;
+    piggyImage.onload = () => { piggyReady = true; };
+    piggyImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="350" height="300" viewBox="0 0 350 300">
+            <ellipse cx="175" cy="160" rx="140" ry="110" fill="#FFC0CB" stroke="#FF69B4" stroke-width="8"/>
+            <circle cx="100" cy="140" r="15" fill="#333"/>
+            <circle cx="250" cy="140" r="15" fill="#333"/>
+            <ellipse cx="175" cy="180" rx="40" ry="30" fill="#FFB6C1" stroke="#FF69B4" stroke-width="4"/>
+            <rect x="155" y="175" width="12" height="12" rx="4" fill="#FF69B4"/>
+            <rect x="183" y="175" width="12" height="12" rx="4" fill="#FF69B4"/>
+            <path d="M120,60 Q100,20 150,50" fill="none" stroke="#FF69B4" stroke-width="10" stroke-linecap="round"/>
+            <path d="M230,60 Q250,20 200,50" fill="none" stroke="#FF69B4" stroke-width="10" stroke-linecap="round"/>
+            <rect x="145" y="70" width="60" height="10" rx="5" fill="#333"/>
+        </svg>
+    `);
+
+    // --- 上載處理 ---
+    function handleCoinUpload(event) {
+        uploadImage(event, (img) => { 
+            coinReady = false;
+            coinImage = img; 
+            coinImage.onload = () => { coinReady = true; };
+        });
+    }
+
+    function handlePiggyUpload(event) {
+        uploadImage(event, (img) => { 
+            piggyReady = false;
+            piggyImage = img; 
+            piggyImage.onload = () => { piggyReady = true; };
+        });
+    }
+
+    function uploadImage(event, callback) {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.src = e.target.result;
+                callback(img);
+            };
+            reader.readAsDataURL(file);
+        }
+    }
+
+    function resetGame() {
+        score = 0;
+        scoreElement.innerText = score;
+        coins = [];
+    }
+
+    class Coin {
+        constructor() {
+            this.x = Math.random() * (GAME_WIDTH - COIN_SIZE) + COIN_SIZE/2;
+            this.y = -COIN_SIZE;
+            this.speed = 8 + Math.random() * 10;
+            this.size = COIN_SIZE;
+            this.rotation = Math.random() * Math.PI * 2;
+            this.rotSpeed = (Math.random() - 0.5) * 0.1;
+        }
+        update() {
+            this.y += this.speed;
+            this.rotation += this.rotSpeed;
+            
+            // 碰撞偵測
+            if (this.y + this.size/2 >= playerY - 90 && 
+                this.y + this.size/2 <= playerY + 50 &&
+                this.x >= playerX - PIGGY_SIZE/2.5 && 
+                this.x <= playerX + PIGGY_SIZE/2.5) {
+                score++;
+                scoreElement.innerText = score;
+                return false; 
+            }
+            return this.y < GAME_HEIGHT + this.size;
+        }
+        draw() {
+            if (!coinReady) return; // 保護機制：如果圖片未就緒或損壞則不繪製
+            try {
+                canvasCtx.save();
+                canvasCtx.translate(this.x, this.y);
+                canvasCtx.rotate(this.rotation);
+                canvasCtx.shadowBlur = 15;
+                canvasCtx.shadowColor = 'rgba(0,0,0,0.5)';
+                canvasCtx.drawImage(coinImage, -this.size/2, -this.size/2, this.size, this.size);
+                canvasCtx.restore();
+            } catch (e) {
+                console.error("繪製硬幣時發生錯誤", e);
+            }
+        }
+    }
+
+    function onResults(results) {
+        if (loadingOverlay.style.display !== 'none') {
+            loadingOverlay.style.display = 'none';
+        }
+
+        if (canvasElement.width !== GAME_WIDTH) {
+            canvasElement.width = GAME_WIDTH;
+            canvasElement.height = GAME_HEIGHT;
+        }
+
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+        // 繪製豬仔錢罌
+        drawPiggy();
+        
+        // 產生硬幣
+        if (Math.random() < 0.045) coins.push(new Coin());
+        
+        // 更新硬幣
+        coins = coins.filter(c => {
+            const active = c.update();
+            if (active) c.draw();
+            return active;
+        });
+
+        canvasCtx.restore();
+    }
+
+    function drawPiggy() {
+        if (!piggyReady) return;
+        canvasCtx.save();
+        canvasCtx.drawImage(
+            piggyImage, 
+            playerX - PIGGY_SIZE/2, 
+            playerY - PIGGY_SIZE/2, 
+            PIGGY_SIZE, 
+            PIGGY_SIZE
+        );
+        canvasCtx.restore();
+    }
+
+    function updatePlayerPos(clientX, clientY) {
+        const rect = canvasElement.getBoundingClientRect();
+        const scaleX = GAME_WIDTH / rect.width;
+        playerX = (clientX - rect.left) * scaleX;
+        playerX = Math.max(PIGGY_SIZE/2, Math.min(GAME_WIDTH - PIGGY_SIZE/2, playerX));
+    }
+
+    canvasElement.addEventListener('mousemove', (e) => updatePlayerPos(e.clientX, e.clientY));
+    canvasElement.addEventListener('touchmove', (e) => {
+        updatePlayerPos(e.touches[0].clientX, e.touches[0].clientY);
+        e.preventDefault();
+    }, {passive: false});
+
+    const selfieSegmentation = new SelfieSegmentation({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+    }});
+
+    selfieSegmentation.setOptions({ modelSelection: 1 });
+    selfieSegmentation.onResults(onResults);
+
+    async function startCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: 1280, height: 720 } 
+            });
+            videoElement.srcObject = stream;
+            videoElement.play();
+            
+            async function detectionLoop() {
+                await selfieSegmentation.send({image: videoElement});
+                requestAnimationFrame(detectionLoop);
+            }
+            detectionLoop();
+        } catch (err) {
+            console.error("相機錯誤", err);
+            loadingOverlay.innerHTML = "<p class='p-4 text-red-500 font-bold'>請開啟相機權限</p>";
+        }
+    }
+
+    window.onload = startCamera;
+</script>
+
+</body>
+</html>
